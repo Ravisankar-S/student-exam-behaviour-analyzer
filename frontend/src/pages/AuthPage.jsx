@@ -1,6 +1,6 @@
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
-import RoleToggle from "../components/RoleToggle"
+import { useState, useEffect } from "react"
+import { useNavigate, useLocation } from "react-router-dom"
+import Cubes from "../components/Cubes"
 import "../styles/auth.css"
 import { signup, login, getMe } from "../api/auth"
 import { useAuth } from "../context/AuthContext"
@@ -72,8 +72,17 @@ function PasswordInput({ id, name, placeholder, value, onChange, autoComplete, e
 }
 
 export default function AuthPage() {
-  const [role, setRole]         = useState("student")
+  const location = useLocation()
+  const role = location.state?.role ?? "student"
   const [isSignup, setIsSignup] = useState(false)
+
+  /* ── Responsive cube grid size ── */
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 600)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= 600)
+    window.addEventListener("resize", handler)
+    return () => window.removeEventListener("resize", handler)
+  }, [])
 
   /* ── Sign-in state ── */
   const [siEmail, setSiEmail]     = useState("")
@@ -178,8 +187,27 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="auth-wrapper">
-      <RoleToggle role={role} setRole={setRole} />
+    <div className="auth-page-root">
+      {/* ── Cubes backdrop (desktop only) ────────────────────── */}
+      {!isMobile && (
+        <div className="cubes-backdrop">
+          <Cubes
+            className="w-full h-full"
+            gridSize={14}
+            maxAngle={40}
+            radius={3}
+            borderStyle="1px solid rgba(13,27,62,0.35)"
+            faceColor="#fff0f0"
+            rippleColor="#ff4b2b"
+            rippleSpeed={1.8}
+            autoAnimate
+            rippleOnClick
+          />
+        </div>
+      )}
+
+      {/* ── Auth content ─────────────────────────────────────── */}
+      <div className="auth-wrapper">
 
       <div className={`container${isSignup ? " right-panel-active" : ""}`}>
 
@@ -358,6 +386,7 @@ export default function AuthPage() {
           </div>
         </div>
 
+      </div>
       </div>
     </div>
   )

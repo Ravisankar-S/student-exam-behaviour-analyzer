@@ -8,12 +8,35 @@
 
 body {
   font-family: 'Montserrat', sans-serif;
-  background: #f6f5f7;
+  background: #fff0f0;
+}
+
+/* ── Page root: positions the cubes layer + content ──── */
+.auth-page-root {
+  position: relative;
+  width: 100%;
+  height: 100vh;         /* gives absolute children a firm reference height */
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  padding: 32px 16px;
+  overflow: hidden;
+}
+
+/* ── Cubes fill the whole viewport behind everything ── */
+.cubes-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+/* On mobile: pin cubes to viewport so they stay put while the form scrolls */
+@media (max-width: 600px) {
+  .cubes-backdrop { display: none; }
 }
 
 /* ── Role Toggle ──────────────────────────────────────── */
@@ -50,15 +73,20 @@ body {
 
 /* ── Sliding Container ────────────────────────────────── */
 .auth-wrapper {
+  position: relative;
+  z-index: 10;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
 .container {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-radius: 10px;
-  box-shadow: 0 14px 28px rgba(0,0,0,.25), 0 10px 10px rgba(0,0,0,.22);
+  border: 2px solid #0d1b3e;
+  box-shadow: 0 20px 60px rgba(13,13,31,0.18), 0 4px 16px rgba(13,13,31,0.10);
   position: relative;
   overflow: hidden;
   width: 768px;
@@ -430,18 +458,29 @@ body {
 /* ══════════════════════════════════════════════════════════
    MOBILE  ≤ 600px
    Vertical layout: form card on top, red banner below.
-   The horizontal slide is replaced with a simple fade swap.
+   The horizontal slide is replaced with a simple show/hide swap.
+   Cubes background is kept — pinned via position:fixed above.
    ══════════════════════════════════════════════════════════ */
 @media (max-width: 600px) {
 
-  body {
+  /* Allow the page to scroll for the tall sign-up form */
+  .auth-page-root {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
     justify-content: flex-start;
+    padding: 0;
   }
 
   .auth-wrapper {
+    position: relative;
+    z-index: 10;
     width: 100%;
     min-height: 100vh;
-    padding: 28px 16px 40px;
+    padding: 36px 16px 52px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
   }
 
@@ -450,20 +489,24 @@ body {
     flex-wrap: wrap;
     justify-content: center;
     gap: 8px;
-    margin-bottom: 20px;
+    margin-bottom: 22px;
   }
 
   .role-toggle button {
-    padding: 9px 16px;
-    font-size: 0.7rem;
+    padding: 10px 20px;
+    font-size: 0.72rem;
+    border-radius: 18px;
   }
 
-  /* ── Container becomes a plain column card ── */
+  /* ── Container becomes a rounded column card ── */
   .container {
     width: 100%;
+    max-width: 420px;
     min-height: unset;
     overflow: visible;
-    border-radius: 16px;
+    border-radius: 22px;
+    border: 2px solid #0d1b3e;
+    box-shadow: 0 16px 48px rgba(13,13,31,0.14), 0 4px 12px rgba(13,13,31,0.08);
   }
 
   /* ── Pull form panels out of absolute positioning ── */
@@ -488,23 +531,45 @@ body {
   .container.right-panel-active .sign-up-container { display: flex; }
 
   .form-container form {
-    padding: 36px 24px 28px;
+    padding: 40px 28px 32px;
     height: auto;
     min-height: unset;
-    gap: 14px;
+    gap: 15px;
+    border-radius: 22px 22px 0 0;
+    background: rgba(255,255,255,0.98);
   }
 
-  .form-container h1 { font-size: 1.35rem; }
+  .form-container h1 {
+    font-size: 1.55rem;
+    margin-bottom: 2px;
+  }
+
+  .form-sub {
+    font-size: 0.82rem;
+    margin-bottom: 4px;
+  }
 
   .form-container input {
-    padding: 14px 44px 14px 14px; /* keep right space for eye btn */
-    font-size: 0.9rem;
+    padding: 15px 46px 15px 15px;
+    font-size: 0.92rem;
+    border-radius: 8px;
   }
 
   .btn-submit {
     width: 100%;
-    padding: 14px;
+    padding: 15px;
+    font-size: 0.82rem;
+    border-radius: 24px;
+    margin-top: 4px;
+  }
+
+  .api-error {
     font-size: 0.8rem;
+    padding: 10px 14px;
+  }
+
+  .field-error {
+    font-size: 0.75rem;
   }
 
   /* ── Overlay becomes a full-width bottom banner ── */
@@ -521,7 +586,7 @@ body {
     left: 0 !important;
     width: 100% !important;
     transform: none !important;
-    border-radius: 0 0 16px 16px;
+    border-radius: 0 0 22px 22px;
   }
 
   /* Shared panel reset */
@@ -530,25 +595,34 @@ body {
     width: 100% !important;
     height: auto !important;
     transform: none !important;
-    padding: 28px 24px;
+    padding: 32px 28px;
     left: auto !important;
     right: auto !important;
   }
 
-  .overlay-panel h1 { font-size: 1.25rem; }
-  .overlay-panel p  { margin-bottom: 20px; font-size: 0.82rem; }
+  .overlay-panel h1 {
+    font-size: 1.4rem;
+    margin-bottom: 10px;
+  }
+
+  .overlay-panel p {
+    margin-bottom: 22px;
+    font-size: 0.86rem;
+    line-height: 1.65;
+  }
 
   .btn-ghost {
     width: 100%;
-    padding: 13px;
-    font-size: 0.8rem;
+    padding: 14px;
+    font-size: 0.82rem;
+    border-radius: 24px;
   }
 
-  /* Default: show right panel (Sign Up prompt), hide left */
+  /* Default: show right panel (→ Sign Up prompt), hide left */
   .overlay-left  { display: none;  }
-  .overlay-right { display: flex; flex-direction: column; }
+  .overlay-right { display: flex; flex-direction: column; align-items: center; }
 
-  /* Active: show left panel (Sign In prompt), hide right */
-  .container.right-panel-active .overlay-left  { display: flex; flex-direction: column; }
+  /* Active: show left panel (→ Sign In prompt), hide right */
+  .container.right-panel-active .overlay-left  { display: flex; flex-direction: column; align-items: center; }
   .container.right-panel-active .overlay-right { display: none; }
 }

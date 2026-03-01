@@ -1,7 +1,9 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
+import RoleSelectPage from './pages/RoleSelectPage'
 import AuthPage from './pages/AuthPage'
 import TeacherDashboard from './pages/TeacherDashboard'
+import ClickSpark from './components/ClickSpark'
 
 /* Redirects to /login if not authenticated; also guards by role */
 function ProtectedRoute({ children, allowedRole }) {
@@ -14,8 +16,16 @@ function ProtectedRoute({ children, allowedRole }) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<AuthPage />} />
+    <ClickSpark
+      sparkColor="#ff4b2b"
+      sparkSize={10}
+      sparkRadius={20}
+      sparkCount={8}
+      duration={450}
+    >
+      <Routes>
+      <Route path="/" element={<RoleSelectPage />} />
+      <Route path="/auth" element={<AuthPage />} />
       <Route
         path="/dashboard/teacher"
         element={
@@ -24,8 +34,9 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      {/* Catch-all → back to auth */}
+      {/* Catch-all → back to role select */}
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </ClickSpark>
   )
 }
