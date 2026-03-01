@@ -1,0 +1,204 @@
+/* ── Dashboard layout ───────────────────────────────────── */
+.dash-page {
+  min-height: 100vh;
+  background: #f4f6fb;
+  font-family: 'Montserrat', 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+.dash-header {
+  background: #fff;
+  border-bottom: 1px solid #e8eaf0;
+  padding: 0 32px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 2px 8px rgba(0,0,0,.05);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.dash-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-logo { font-size: 1.5rem; }
+
+.dash-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #1a1a2e;
+  letter-spacing: -0.3px;
+}
+
+.dash-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dash-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff4b2b, #ff416c);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.dash-user-info { line-height: 1.2; }
+
+.dash-user-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0;
+}
+
+.dash-user-role {
+  font-size: 0.72rem;
+  color: #ff4b2b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+.dash-logout-btn {
+  border: 2px solid #ff4b2b;
+  background: transparent;
+  color: #ff4b2b;
+  padding: 7px 18px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  transition: background 200ms ease, color 200ms ease;
+  font-family: inherit;
+}
+
+.dash-logout-btn:hover {
+  background: linear-gradient(135deg, #ff4b2b, #ff416c);
+  color: #fff;
+}
+
+/* ── Main content ───────────────────────────────────────── */
+.dash-main {
+  padding: 36px 32px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* ── Welcome ────────────────────────────────────────────── */
+.dash-welcome h1 {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #1a1a2e;
+  margin: 0 0 6px;
+}
+
+.dash-welcome p {
+  color: #64748b;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+/* ── Stat cards ─────────────────────────────────────────── */
+.dash-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 18px;
+}
+
+.dash-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 22px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.06);
+  border: 1px solid #eef0f7;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.dash-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,.1);
+}
+
+.dash-card-icon { font-size: 1.8rem; }
+
+.dash-card-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #1a1a2e;
+  margin: 0 0 2px;
+}
+
+.dash-card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+/* ── Panel ──────────────────────────────────────────────── */
+.dash-panel {
+  background: #fff;
+  border-radius: 14px;
+  padding: 28px 24px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.06);
+  border: 1px solid #eef0f7;
+}
+
+.dash-panel h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0 0 16px;
+}
+
+.dash-empty {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 32px 0;
+  margin: 0;
+}
+
+/* ── Loading screen ─────────────────────────────────────── */
+.loading-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1rem;
+  color: #64748b;
+}
+
+/* ── Mobile ─────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .dash-header { padding: 0 16px; }
+  .dash-user-info { display: none; }
+  .dash-main { padding: 24px 16px; }
+  .dash-welcome h1 { font-size: 1.25rem; }
+}

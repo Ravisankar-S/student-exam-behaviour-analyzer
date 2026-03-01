@@ -159,6 +159,177 @@ body {
   box-shadow: 0 8px 20px rgba(255, 65, 108, 0.45);
 }
 
+.btn-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ── API / server-side error banner ─────────────────────── */
+.api-error {
+  width: 100%;
+  background: #fff5f5;
+  border: 1.5px solid #feb2b2;
+  color: #c53030;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* ── Form sub-heading ───────────────────────────────────── */
+.form-sub {
+  font-size: 0.78rem;
+  color: #888;
+  margin-top: -6px;
+  letter-spacing: 0.2px;
+  text-transform: capitalize;
+}
+
+/* ── Input wrapper (for eye toggle + error) ─────────────── */
+.input-wrapper {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.input-wrapper input {
+  width: 100%;
+  padding: 13px 42px 13px 15px; /* right space for eye btn */
+}
+
+/* Error state border */
+.input-wrapper.input-error input {
+  border: 1.5px solid #e53e3e !important;
+  background: #fff5f5;
+}
+
+.field-error {
+  font-size: 0.72rem;
+  color: #e53e3e;
+  margin-top: 4px;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+/* ── Eye toggle button ──────────────────────────────────── */
+.eye-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  /* shift up when there is no error text; JS shows/hides the error below */
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: #999;
+  display: flex;
+  align-items: center;
+  transition: color 150ms ease;
+}
+
+/* When error text is present the input is no longer the only child,
+   so keep the button anchored to the input itself */
+.input-wrapper.input-error .eye-btn {
+  top: 13px;
+  transform: none;
+}
+
+.eye-btn svg {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.eye-btn:hover { color: #ff4b2b; }
+
+/* ── Password strength bar ──────────────────────────────── */
+.pw-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.pw-strength-bar {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.pw-strength-seg {
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  transition: background 300ms ease;
+}
+
+.pw-strength-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  min-width: 58px;
+  text-align: right;
+}
+
+/* ── Forgot password link ───────────────────────────────── */
+.form-links {
+  width: 100%;
+  text-align: right;
+  margin-top: -4px;
+}
+
+.forgot-link {
+  font-size: 0.75rem;
+  color: #ff4b2b;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.2px;
+  transition: opacity 150ms ease;
+}
+
+.forgot-link:hover { opacity: 0.75; }
+
+/* ── Terms checkbox ─────────────────────────────────────── */
+.terms-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 0.75rem;
+  color: #555;
+  text-align: left;
+  line-height: 1.5;
+  cursor: pointer;
+  width: 100%;
+}
+
+.terms-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  margin-top: 2px;
+  accent-color: #ff4b2b;
+  cursor: pointer;
+  background: unset;
+  border: unset;
+  padding: unset;
+}
+
+.terms-label a {
+  color: #ff4b2b;
+  text-decoration: none;
+  font-weight: 700;
+}
+.terms-label a:hover { text-decoration: underline; }
+
+.terms-label.terms-error span { color: #e53e3e; }
+
 /* ── Overlay Container ────────────────────────────────── */
 .overlay-container {
   position: absolute;
@@ -254,4 +425,130 @@ body {
 .btn-ghost:hover {
   background: rgba(255,255,255,0.15);
   transform: translateY(-2px);
+}
+
+/* ══════════════════════════════════════════════════════════
+   MOBILE  ≤ 600px
+   Vertical layout: form card on top, red banner below.
+   The horizontal slide is replaced with a simple fade swap.
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+
+  body {
+    justify-content: flex-start;
+  }
+
+  .auth-wrapper {
+    width: 100%;
+    min-height: 100vh;
+    padding: 28px 16px 40px;
+    justify-content: center;
+  }
+
+  /* Role toggle wraps on very small screens */
+  .role-toggle {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  .role-toggle button {
+    padding: 9px 16px;
+    font-size: 0.7rem;
+  }
+
+  /* ── Container becomes a plain column card ── */
+  .container {
+    width: 100%;
+    min-height: unset;
+    overflow: visible;
+    border-radius: 16px;
+  }
+
+  /* ── Pull form panels out of absolute positioning ── */
+  .form-container {
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    left: auto !important;
+    top: auto !important;
+    transform: none !important;
+    opacity: 1 !important;
+    z-index: auto !important;
+    animation: none !important;
+  }
+
+  /* Default: show sign-in, hide sign-up */
+  .sign-in-container { display: flex; }
+  .sign-up-container { display: none;  }
+
+  /* Active: swap */
+  .container.right-panel-active .sign-in-container { display: none; }
+  .container.right-panel-active .sign-up-container { display: flex; }
+
+  .form-container form {
+    padding: 36px 24px 28px;
+    height: auto;
+    min-height: unset;
+    gap: 14px;
+  }
+
+  .form-container h1 { font-size: 1.35rem; }
+
+  .form-container input {
+    padding: 14px 44px 14px 14px; /* keep right space for eye btn */
+    font-size: 0.9rem;
+  }
+
+  .btn-submit {
+    width: 100%;
+    padding: 14px;
+    font-size: 0.8rem;
+  }
+
+  /* ── Overlay becomes a full-width bottom banner ── */
+  .overlay-container {
+    position: relative !important;
+    left: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    transform: none !important;
+    overflow: visible;
+  }
+
+  .overlay {
+    left: 0 !important;
+    width: 100% !important;
+    transform: none !important;
+    border-radius: 0 0 16px 16px;
+  }
+
+  /* Shared panel reset */
+  .overlay-panel {
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    transform: none !important;
+    padding: 28px 24px;
+    left: auto !important;
+    right: auto !important;
+  }
+
+  .overlay-panel h1 { font-size: 1.25rem; }
+  .overlay-panel p  { margin-bottom: 20px; font-size: 0.82rem; }
+
+  .btn-ghost {
+    width: 100%;
+    padding: 13px;
+    font-size: 0.8rem;
+  }
+
+  /* Default: show right panel (Sign Up prompt), hide left */
+  .overlay-left  { display: none;  }
+  .overlay-right { display: flex; flex-direction: column; }
+
+  /* Active: show left panel (Sign In prompt), hide right */
+  .container.right-panel-active .overlay-left  { display: flex; flex-direction: column; }
+  .container.right-panel-active .overlay-right { display: none; }
 }
