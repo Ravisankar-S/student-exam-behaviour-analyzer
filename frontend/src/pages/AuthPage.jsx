@@ -196,7 +196,7 @@ export default function AuthPage() {
             gridSize={14}
             maxAngle={40}
             radius={3}
-            borderStyle="1px solid rgba(13,27,62,0.35)"
+            borderStyle="2px dotted rgba(13,27,62,0.35)"
             faceColor="#fff0f0"
             rippleColor="#ff4b2b"
             rippleSpeed={1.8}
