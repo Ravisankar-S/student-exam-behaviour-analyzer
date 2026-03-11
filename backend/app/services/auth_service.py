@@ -36,3 +36,16 @@ def authenticate_user(db: Session, email: str, password: str):
     })
 
     return token
+
+
+def change_user_password(db: Session, user: User, current_password: str, new_password: str):
+    if user.auth_provider != AuthProviderEnum.local:
+        raise ValueError("Password change is only available for local accounts")
+
+    if not user.password_hash or not verify_password(current_password, user.password_hash):
+        raise ValueError("Current password is incorrect")
+
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    db.refresh(user)
+    return True

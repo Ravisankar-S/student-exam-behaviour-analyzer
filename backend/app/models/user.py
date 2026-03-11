@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Enum, DateTime
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 import uuid
 from app.db.base import Base
 import enum
@@ -26,3 +27,5 @@ class User(Base):
     auth_provider = Column(Enum(AuthProviderEnum), default=AuthProviderEnum.local)
     provider_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    assessments = relationship("Assessment", back_populates="creator", cascade="all, delete-orphan")

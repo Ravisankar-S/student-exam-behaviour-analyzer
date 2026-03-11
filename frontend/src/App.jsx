@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext'
 import RoleSelectPage from './pages/RoleSelectPage'
 import AuthPage from './pages/AuthPage'
 import TeacherDashboard from './pages/TeacherDashboard'
+import ExamQuestionsPage from './pages/ExamQuestionsPage'
 import ClickSpark from './components/ClickSpark'
 
 /* Redirects to /login if not authenticated; also guards by role */
@@ -31,6 +32,14 @@ export default function App() {
         element={
           <ProtectedRoute allowedRole="teacher">
             <TeacherDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/teacher/exam/:examId/questions"
+        element={
+          <ProtectedRoute allowedRole="teacher">
+            <ExamQuestionsPage />
           </ProtectedRoute>
         }
       />

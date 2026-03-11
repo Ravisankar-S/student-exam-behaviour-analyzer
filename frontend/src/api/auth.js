@@ -17,3 +17,10 @@ export const getMe = (token) =>
       Authorization: `Bearer ${token}`,
     },
   })
+
+export const changePassword = (token, data) =>
+  API.patch("/auth/password", data, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
