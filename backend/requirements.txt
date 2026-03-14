@@ -28,3 +28,6 @@ numpy>=2.1,<3.0
 pandas>=2.2.2
 scikit-learn>=1.5.0
 python-dateutil>=2.9.0
+
+# ---------- Resend ----------
+resend>=0.10.0

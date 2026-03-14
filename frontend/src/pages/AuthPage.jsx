@@ -108,7 +108,7 @@ export default function AuthPage() {
   const pwStrength = scorePassword(suPassword)
   const isAdmin = role === "admin"
   const isStudent = role === "student"
-  const canSignup = !isAdmin
+  const canSignup = isStudent
 
   useEffect(() => {
     if (!canSignup) setIsSignup(false)
@@ -416,7 +416,7 @@ export default function AuthPage() {
             )}
 
             <button type="submit" className="btn-submit" disabled={suLoading}>
-              {suLoading ? (isStudent ? "Submitting request…" : "Creating account…") : (isStudent ? "Submit Request" : "Create Account")}
+              {suLoading ? "Submitting request…" : "Submit Request"}
             </button>
           </form>
         </div>}
@@ -430,8 +430,8 @@ export default function AuthPage() {
               <button className="btn-ghost" onClick={() => setIsSignup(false)}>Sign In</button>
             </div>
             <div className="overlay-panel overlay-right">
-              <h1>{canSignup ? "Hello, Friend!" : "Admin Access"}</h1>
-              <p>{canSignup ? "New here? Create an account and start your journey with us." : "Admin account is provisioned by the system. Use your seeded credentials to sign in."}</p>
+              <h1>{canSignup ? "Hello, Friend!" : role === "teacher" ? "Teacher Access" : "Admin Access"}</h1>
+              <p>{canSignup ? "New here? Create an account and start your journey with us." : role === "teacher" ? "Teacher accounts are provisioned by admin. Please sign in with provided credentials." : "Admin account is provisioned by the system. Use your seeded credentials to sign in."}</p>
               {canSignup && <button className="btn-ghost" onClick={() => setIsSignup(true)}>Sign Up</button>}
             </div>
           </div>

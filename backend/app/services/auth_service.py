@@ -6,9 +6,25 @@ from app.models.admission_request import AdmissionRequest, AdmissionStatusEnum
 from app.core.security import hash_password, verify_password, create_access_token
 import uuid
 
-def register_user(db: Session, name: str, email: str, password: Optional[str], role: str, reg_no: Optional[str] = None):
+
+def generate_initial_password(name: str) -> str:
+    base = "".join(ch for ch in (name or "") if ch.isalpha()).lower()
+    seed = (base[:4] if len(base) >= 4 else (base + "user")[:4])
+    return f"{seed}@123"
+
+def register_user(
+    db: Session,
+    name: str,
+    email: str,
+    password: Optional[str],
+    role: str,
+    reg_no: Optional[str] = None,
+    internal_create: bool = False,
+):
     if role == RoleEnum.admin.value:
         raise ValueError("Admin signup is disabled")
+    if role == RoleEnum.teacher.value and not internal_create:
+        raise ValueError("Teacher signup is disabled")
 
     existing = db.query(User).filter(User.email == email).first()
     if existing:

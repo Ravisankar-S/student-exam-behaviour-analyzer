@@ -28,3 +28,17 @@ class ProfileUpdateRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class TestEmailRequest(BaseModel):
+    to_email: Optional[EmailStr] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
+class AdminCreateTeacherRequest(BaseModel):
+    name: str
+    college_email: EmailStr
+    employee_id: Optional[str] = None
+    designation: Optional[str] = None
+    department: Optional[str] = None

@@ -32,6 +32,20 @@ export const getStudents = (token, q = "") =>
     },
   })
 
+export const getTeachers = (token, q = "") =>
+  API.get(`/auth/teachers${q ? `?q=${encodeURIComponent(q)}` : ""}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+export const createTeacher = (token, data) =>
+  API.post("/auth/teachers", data, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
 export const getTeacherProfile = (token) =>
   API.get("/auth/teacher-profile", {
     headers: {
@@ -80,6 +94,34 @@ export const approveAdmissionRequest = (token, studentUserId) =>
 
 export const rejectAdmissionRequest = (token, studentUserId) =>
   API.post(`/auth/admission-requests/${studentUserId}/reject`, null, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+export const getFacultyRequests = (token, status = "pending") =>
+  API.get(`/auth/faculty-requests?status=${encodeURIComponent(status)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+export const createFacultyRequest = (token, data) =>
+  API.post("/auth/faculty-requests", data, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+export const approveFacultyRequest = (token, requestId) =>
+  API.post(`/auth/faculty-requests/${requestId}/approve`, null, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+export const rejectFacultyRequest = (token, requestId) =>
+  API.post(`/auth/faculty-requests/${requestId}/reject`, null, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
