@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from app.models.question import Question, Option
 from app.models.assessment import Assessment
 from app.schemas.question import QuestionCreate, QuestionUpdate
+from app.utils.uploads import delete_uploaded_file
 from uuid import UUID
 
 
@@ -10,6 +11,7 @@ def _serialize_question(q: Question) -> dict:
         "id": str(q.id),
         "assessment_id": str(q.assessment_id),
         "question_text": q.question_text,
+        "question_image_path": q.question_image_path,
         "order_index": q.order_index,
         "options": [
             {
@@ -52,6 +54,7 @@ def create_question(db: Session, assessment_id: str, data: QuestionCreate, teach
     question = Question(
         assessment_id=assessment_id,
         question_text=data.question_text,
+        question_image_path=data.question_image_path or None,
         order_index=max_order,
     )
     db.add(question)
@@ -94,6 +97,11 @@ def update_question(
 
     if data.question_text is not None:
         question.question_text = data.question_text
+    if data.question_image_path is not None:
+        old_path = question.question_image_path
+        question.question_image_path = data.question_image_path or None
+        if old_path and old_path != question.question_image_path:
+            delete_uploaded_file(old_path)
 
     if data.options is not None:
         for old_opt in question.options:
@@ -128,8 +136,11 @@ def delete_question(db: Session, assessment_id: str, question_id: str, teacher_i
     if not question:
         return False
 
+    question_image_path = question.question_image_path
+
     db.delete(question)
     db.commit()
+    delete_uploaded_file(question_image_path)
 
     # Re-number order indices
     remaining = (

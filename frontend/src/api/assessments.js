@@ -42,6 +42,17 @@ export const deleteQuestion = (token, assessmentId, questionId) =>
 export const reorderQuestions = (token, assessmentId, ids) =>
   API.patch(`/assessments/${assessmentId}/questions/reorder`, { ids }, authHeader(token))
 
+export const uploadQuestionImage = (token, assessmentId, file) => {
+  const formData = new FormData()
+  formData.append("file", file)
+  return API.post(`/assessments/${assessmentId}/questions/upload-image`, formData, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "multipart/form-data",
+    },
+  })
+}
+
 // ── Profile ──────────────────────────────────
 export const updateProfile = (token, data) =>
   API.patch("/auth/profile", data, authHeader(token))

@@ -26,6 +26,9 @@ class User(Base):
     role = Column(Enum(RoleEnum), nullable=False)
     auth_provider = Column(Enum(AuthProviderEnum), default=AuthProviderEnum.local)
     provider_id = Column(String, nullable=True)
+    profile_picture_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     assessments = relationship("Assessment", back_populates="creator", cascade="all, delete-orphan")
+    student_profile = relationship("StudentProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    teacher_profile = relationship("TeacherProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")

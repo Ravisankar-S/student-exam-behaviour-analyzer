@@ -12,6 +12,7 @@ class Question(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     assessment_id = Column(UUID(as_uuid=True), ForeignKey("assessments.id"), nullable=False)
     question_text = Column(String, nullable=False)
+    question_image_path = Column(String, nullable=True)
     order_index = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from app.schemas.question import QuestionCreate, QuestionUpdate, ReorderRequest
 from app.services.question_service import (
@@ -10,6 +10,8 @@ from app.services.question_service import (
 )
 from app.api.deps import get_db, get_current_user
 from app.models.user import User, RoleEnum
+from app.models.assessment import Assessment
+from app.utils.uploads import save_image_upload
 
 router = APIRouter(prefix="/assessments", tags=["questions"])
 
@@ -43,6 +45,24 @@ def create(
     if result is None:
         raise HTTPException(status_code=404, detail="Assessment not found")
     return result
+
+
+@router.post("/{assessment_id}/questions/upload-image")
+def upload_question_image(
+    assessment_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_teacher),
+):
+    assessment = db.query(Assessment).filter(
+        Assessment.id == assessment_id,
+        Assessment.created_by == current_user.id,
+    ).first()
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    path = save_image_upload(file, "questions")
+    return {"question_image_path": path}
 
 
 # NOTE: /reorder must be defined BEFORE /{question_id} to avoid route conflict

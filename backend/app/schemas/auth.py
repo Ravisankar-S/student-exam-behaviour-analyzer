@@ -5,8 +5,9 @@ from typing import Optional
 class SignupRequest(BaseModel):
     name: str
     email: EmailStr
-    password: str
+    password: Optional[str] = None
     role: str
+    reg_no: Optional[str] = None
 
 
 class LoginRequest(BaseModel):

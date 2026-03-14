@@ -91,6 +91,7 @@ export default function AuthPage() {
 
   /* ── Sign-up state ── */
   const [suName, setSuName]           = useState("")
+  const [suRegNo, setSuRegNo]         = useState("")
   const [suEmail, setSuEmail]         = useState("")
   const [suPassword, setSuPassword]   = useState("")
   const [suConfirm, setSuConfirm]     = useState("")
@@ -100,10 +101,18 @@ export default function AuthPage() {
   const [suApiError, setSuApiError]   = useState("")
   const [siLoading, setSiLoading]     = useState(false)
   const [suLoading, setSuLoading]     = useState(false)
+  const [pendingModalOpen, setPendingModalOpen] = useState(false)
 
   const { setToken } = useAuth()
   const navigate = useNavigate()
   const pwStrength = scorePassword(suPassword)
+  const isAdmin = role === "admin"
+  const isStudent = role === "student"
+  const canSignup = !isAdmin
+
+  useEffect(() => {
+    if (!canSignup) setIsSignup(false)
+  }, [canSignup])
 
   /* ── Sign-in validation + API call ─────────────────────────────── */
   async function handleSignIn(e) {
@@ -136,8 +145,14 @@ export default function AuthPage() {
   /* ── Sign-up validation (OWASP A07 — input validation) ─────────── */
   async function handleSignUp(e) {
     e.preventDefault()
+    if (!canSignup) {
+      setSuApiError("Admin signup is disabled. Please use seeded admin credentials.")
+      return
+    }
+
     const errs = {}
     const nameTrimmed = suName.trim()
+    const regNoTrimmed = suRegNo.trim()
 
     if (!nameTrimmed || nameTrimmed.length < 2)
       errs.name = "Full name must be at least 2 characters."
@@ -147,20 +162,27 @@ export default function AuthPage() {
     if (!suEmail)
       errs.email = "Email is required."
 
-    if (suPassword.length < 8)
-      errs.password = "Password must be at least 8 characters."
-    if (!/[A-Z]/.test(suPassword))
-      errs.password = "Password must contain at least one uppercase letter."
-    if (!/[0-9]/.test(suPassword))
-      errs.password = "Password must contain at least one digit."
-    if (!/[^A-Za-z0-9]/.test(suPassword))
-      errs.password = "Password must contain at least one special character."
+    if (isStudent && !regNoTrimmed)
+      errs.reg_no = "Registration number is required."
+    if (isStudent && regNoTrimmed.length > 64)
+      errs.reg_no = "Reg No must not exceed 64 characters."
 
-    if (suPassword !== suConfirm)
-      errs.confirm = "Passwords do not match."
+    if (!isStudent) {
+      if (suPassword.length < 8)
+        errs.password = "Password must be at least 8 characters."
+      if (!/[A-Z]/.test(suPassword))
+        errs.password = "Password must contain at least one uppercase letter."
+      if (!/[0-9]/.test(suPassword))
+        errs.password = "Password must contain at least one digit."
+      if (!/[^A-Za-z0-9]/.test(suPassword))
+        errs.password = "Password must contain at least one special character."
 
-    if (!suTerms)
-      errs.terms = "You must agree to the Terms of Service."
+      if (suPassword !== suConfirm)
+        errs.confirm = "Passwords do not match."
+
+      if (!suTerms)
+        errs.terms = "You must agree to the Terms of Service."
+    }
 
     setSuErrors(errs)
     if (Object.keys(errs).length) return
@@ -170,13 +192,18 @@ export default function AuthPage() {
     try {
       await signup({
         name: nameTrimmed,
+        reg_no: isStudent ? regNoTrimmed : null,
         email: suEmail,
-        password: suPassword,
+        ...(isStudent ? {} : { password: suPassword }),
         role,
       })
       // clear form and switch to sign-in
-      setSuName(""); setSuEmail(""); setSuPassword(""); setSuConfirm(""); setSuTerms(false)
-      setIsSignup(false)
+      setSuName(""); setSuRegNo(""); setSuEmail(""); setSuPassword(""); setSuConfirm(""); setSuTerms(false)
+      if (isStudent) {
+        setPendingModalOpen(true)
+      } else {
+        setIsSignup(false)
+      }
     } catch (err) {
       setSuApiError(
         err.response?.data?.detail || "Signup failed. Please try again."
@@ -263,7 +290,7 @@ export default function AuthPage() {
         </div>
 
         {/* ══ Sign Up Panel ══════════════════════════════════════════ */}
-        <div className="form-container sign-up-container">
+        {canSignup && <div className="form-container sign-up-container">
           <form onSubmit={handleSignUp} noValidate autoComplete="on">
             <h1>Create Account</h1>
             <p className="form-sub">Joining as <strong>{role}</strong></p>
@@ -308,56 +335,80 @@ export default function AuthPage() {
               )}
             </div>
 
-            {/* Password + strength meter */}
-            <PasswordInput
-              id="su-password"
-              name="password"
-              placeholder="Password (min 8 chars)"
-              value={suPassword}
-              onChange={e => setSuPassword(e.target.value)}
-              autoComplete="new-password"
-              error={suErrors.password}
-            />
-            {suPassword && (
-              <div className="pw-strength" aria-live="polite">
-                <div className="pw-strength-bar">
-                  {[1,2,3,4].map(i => (
-                    <span
-                      key={i}
-                      className="pw-strength-seg"
-                      style={{ background: i <= pwStrength.score ? pwStrength.color : "#ddd" }}
-                    />
-                  ))}
-                </div>
-                <span className="pw-strength-label" style={{ color: pwStrength.color }}>
-                  {pwStrength.label}
-                </span>
+            {/* Student Reg No */}
+            {role === "student" && (
+              <div className={`input-wrapper${suErrors.reg_no ? " input-error" : ""}`}>
+                <input
+                  id="su-regno"
+                  name="reg_no"
+                  type="text"
+                  placeholder="Reg No"
+                  value={suRegNo}
+                  onChange={e => setSuRegNo(e.target.value)}
+                  maxLength={64}
+                  required
+                  aria-describedby={suErrors.reg_no ? "su-regno-err" : undefined}
+                />
+                {suErrors.reg_no && (
+                  <span className="field-error" id="su-regno-err" role="alert">{suErrors.reg_no}</span>
+                )}
               </div>
             )}
 
-            {/* Confirm Password */}
-            <PasswordInput
-              id="su-confirm"
-              name="confirm_password"
-              placeholder="Confirm password"
-              value={suConfirm}
-              onChange={e => setSuConfirm(e.target.value)}
-              autoComplete="new-password"
-              error={suErrors.confirm}
-            />
+            {/* Password + strength meter */}
+            {role !== "student" && (
+              <>
+                <PasswordInput
+                  id="su-password"
+                  name="password"
+                  placeholder="Password (min 8 chars)"
+                  value={suPassword}
+                  onChange={e => setSuPassword(e.target.value)}
+                  autoComplete="new-password"
+                  error={suErrors.password}
+                />
+                {suPassword && (
+                  <div className="pw-strength" aria-live="polite">
+                    <div className="pw-strength-bar">
+                      {[1,2,3,4].map(i => (
+                        <span
+                          key={i}
+                          className="pw-strength-seg"
+                          style={{ background: i <= pwStrength.score ? pwStrength.color : "#ddd" }}
+                        />
+                      ))}
+                    </div>
+                    <span className="pw-strength-label" style={{ color: pwStrength.color }}>
+                      {pwStrength.label}
+                    </span>
+                  </div>
+                )}
 
-            {/* Terms */}
-            <label className={`terms-label${suErrors.terms ? " terms-error" : ""}`}>
-              <input
-                type="checkbox"
-                checked={suTerms}
-                onChange={e => setSuTerms(e.target.checked)}
-                required
-              />
-              <span>I agree to the <a href="#" tabIndex={0}>Terms of Service</a> and <a href="#" tabIndex={0}>Privacy Policy</a></span>
-            </label>
-            {suErrors.terms && (
-              <span className="field-error" role="alert">{suErrors.terms}</span>
+                {/* Confirm Password */}
+                <PasswordInput
+                  id="su-confirm"
+                  name="confirm_password"
+                  placeholder="Confirm password"
+                  value={suConfirm}
+                  onChange={e => setSuConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  error={suErrors.confirm}
+                />
+
+                {/* Terms */}
+                <label className={`terms-label${suErrors.terms ? " terms-error" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={suTerms}
+                    onChange={e => setSuTerms(e.target.checked)}
+                    required
+                  />
+                  <span>I agree to the <a href="#" tabIndex={0}>Terms of Service</a> and <a href="#" tabIndex={0}>Privacy Policy</a></span>
+                </label>
+                {suErrors.terms && (
+                  <span className="field-error" role="alert">{suErrors.terms}</span>
+                )}
+              </>
             )}
 
             {suApiError && (
@@ -365,10 +416,10 @@ export default function AuthPage() {
             )}
 
             <button type="submit" className="btn-submit" disabled={suLoading}>
-              {suLoading ? "Creating account…" : "Create Account"}
+              {suLoading ? (isStudent ? "Submitting request…" : "Creating account…") : (isStudent ? "Submit Request" : "Create Account")}
             </button>
           </form>
-        </div>
+        </div>}
 
         {/* ══ Sliding Overlay ════════════════════════════════════════ */}
         <div className="overlay-container">
@@ -379,14 +430,32 @@ export default function AuthPage() {
               <button className="btn-ghost" onClick={() => setIsSignup(false)}>Sign In</button>
             </div>
             <div className="overlay-panel overlay-right">
-              <h1>Hello, Friend!</h1>
-              <p>New here? Create an account and start your journey with us.</p>
-              <button className="btn-ghost" onClick={() => setIsSignup(true)}>Sign Up</button>
+              <h1>{canSignup ? "Hello, Friend!" : "Admin Access"}</h1>
+              <p>{canSignup ? "New here? Create an account and start your journey with us." : "Admin account is provisioned by the system. Use your seeded credentials to sign in."}</p>
+              {canSignup && <button className="btn-ghost" onClick={() => setIsSignup(true)}>Sign Up</button>}
             </div>
           </div>
         </div>
 
       </div>
+
+      {pendingModalOpen && (
+        <div className="auth-modal-backdrop" role="dialog" aria-modal="true" aria-label="Account pending verification">
+          <div className="auth-modal">
+            <h2>Request Submitted</h2>
+            <p>Your account will be activated once verified. Please check email to find further instructions.</p>
+            <button
+              className="btn-submit"
+              onClick={() => {
+                setPendingModalOpen(false)
+                setIsSignup(false)
+              }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   )

@@ -11,13 +11,38 @@ import { CSS } from "@dnd-kit/utilities"
 import {
   LayoutDashboard, BookOpen, User, LogOut, Menu, X, Plus,
   Edit2, Trash2, Eye, EyeOff, Clock, Users, BookMarked,
-  ChevronRight, AlertCircle, GripVertical, HelpCircle, ListFilter, RotateCcw, ChevronDown,
+  ChevronRight, AlertCircle, GripVertical, HelpCircle, ListFilter, RotateCcw, ChevronDown, BarChart3,
 } from "lucide-react"
 import {
   getMyAssessments, createAssessment, updateAssessment,
-  deleteAssessment, reorderAssessments, updateProfile,
+  deleteAssessment, reorderAssessments, updateProfile, getAssessmentAttempts,
 } from "../api/assessments"
-import { changePassword } from "../api/auth"
+import {
+  changePassword,
+  getStudents,
+  getTeacherProfile,
+  updateTeacherProfile,
+  uploadProfilePicture,
+  deleteProfilePicture,
+} from "../api/auth"
+import ChangePasswordModal from "../components/ChangePasswordModal"
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ScatterChart,
+  Scatter,
+} from "recharts"
 
 // ── Subject colour palette ───────────────────
 const SUBJECT_COLORS = [
@@ -34,6 +59,61 @@ function subjectColor(subject = "") {
   let hash = 0
   for (const c of subject) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff
   return SUBJECT_COLORS[hash % SUBJECT_COLORS.length]
+}
+
+const BEHAVIOR_LABELS = ["Fast_Response", "High_Revision", "Deliberative", "Disengaged"]
+
+function hashText(text = "") {
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash)
+}
+
+function durationMinutesFromAttempt(attempt, fallbackDuration = 60) {
+  if (attempt?.started_at && attempt?.submitted_at) {
+    const ms = new Date(attempt.submitted_at).getTime() - new Date(attempt.started_at).getTime()
+    if (ms > 0) return ms / 60000
+  }
+  return fallbackDuration * 0.72
+}
+
+function toAbsoluteImageUrl(path) {
+  if (!path) return null
+  if (path.startsWith("http://") || path.startsWith("https://")) return path
+  return `http://127.0.0.1:8000${path}`
+}
+
+function enrichAttemptDummy(attempt, fallbackDuration = 60) {
+  const seed = hashText(`${attempt.id}-${attempt.student_id}-${attempt.score ?? 0}`)
+  const behavior = BEHAVIOR_LABELS[seed % BEHAVIOR_LABELS.length]
+  const durationMin = durationMinutesFromAttempt(attempt, fallbackDuration)
+  const avgTimeSec = Math.max(8, Math.round((durationMin * 60) / (8 + (seed % 8))))
+  const revisions = behavior === "High_Revision"
+    ? 4 + (seed % 5)
+    : behavior === "Deliberative"
+      ? 2 + (seed % 3)
+      : behavior === "Disengaged"
+        ? 1 + (seed % 2)
+        : seed % 2
+  const navigationJumps = behavior === "Disengaged"
+    ? 6 + (seed % 6)
+    : behavior === "High_Revision"
+      ? 4 + (seed % 4)
+      : 1 + (seed % 4)
+  const anomaly = (attempt.score ?? 0) < 25 || navigationJumps >= 9 || (attempt.score ?? 0) > 95 && durationMin < 8
+
+  return {
+    ...attempt,
+    behavior,
+    avg_time_sec: avgTimeSec,
+    revisions,
+    navigation_jumps: navigationJumps,
+    duration_min: durationMin,
+    anomaly,
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -54,6 +134,13 @@ export default function TeacherDashboard() {
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [toast, setToast]                 = useState(null)
   const [formLoading, setFormLoading]     = useState(false)
+  const [analyticsTab, setAnalyticsTab]   = useState("exam")
+  const [selectedExamAnalytics, setSelectedExamAnalytics] = useState(null)
+  const [examAttemptsMap, setExamAttemptsMap] = useState({})
+  const [students, setStudents] = useState([])
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const [studentFilters, setStudentFilters] = useState({ query: "", behavior: "all", participation: "all" })
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false)
   const [reorderMode, setReorderMode]     = useState(false)
   const [examFilters, setExamFilters]     = useState({
     query: "",
@@ -65,12 +152,22 @@ export default function TeacherDashboard() {
   const [formData, setFormData]           = useState(blankForm)
   const [profileForm, setProfileForm]     = useState({ name: "", email: "" })
   const [profileLoading, setProfileLoading] = useState(false)
-  const [passwordForm, setPasswordForm]   = useState({
-    current_password: "",
-    new_password: "",
-    confirm_password: "",
-  })
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [passwordLoading, setPasswordLoading] = useState(false)
+  const [teacherProfileForm, setTeacherProfileForm] = useState({
+    employee_id: "",
+    college_email: "",
+    department: "",
+    designation: "",
+    subjects: "",
+    office_room: "",
+    year_of_joining: "",
+  })
+  const [teacherProfileLoading, setTeacherProfileLoading] = useState(false)
+  const [teacherProfileSaving, setTeacherProfileSaving] = useState(false)
+  const [profilePictureUploading, setProfilePictureUploading] = useState(false)
+  const [profilePictureDeleting, setProfilePictureDeleting] = useState(false)
+  const [imageModalSrc, setImageModalSrc] = useState(null)
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -80,6 +177,14 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (user) setProfileForm({ name: user.name || "", email: user.email || "" })
   }, [user])
+  useEffect(() => {
+    if (activeTab === "analytics") loadAnalyticsData()
+  }, [activeTab, exams.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (activeTab === "profile" && user?.role === "teacher") {
+      loadTeacherProfile()
+    }
+  }, [activeTab, user?.role]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadExams() {
     setLoadingExams(true)
@@ -178,7 +283,12 @@ export default function TeacherDashboard() {
   async function handleProfileSave() {
     setProfileLoading(true)
     try {
+      const normalizedYear = teacherProfileForm.year_of_joining === ""
+        ? null
+        : parseInt(teacherProfileForm.year_of_joining, 10)
+
       const res = await updateProfile(token, profileForm)
+      await updateTeacherProfile(token, { year_of_joining: Number.isNaN(normalizedYear) ? null : normalizedYear })
       setUser(res.data)
       flash("Profile updated")
     } catch (err) {
@@ -188,32 +298,108 @@ export default function TeacherDashboard() {
     }
   }
 
-  async function handlePasswordSave() {
-    if (!passwordForm.current_password || !passwordForm.new_password || !passwordForm.confirm_password) {
-      flash("Please fill all password fields", "error")
-      return
+  async function loadAnalyticsData() {
+    setLoadingAnalytics(true)
+    try {
+      const attemptsEntries = await Promise.all(
+        exams.map(async (exam) => {
+          const res = await getAssessmentAttempts(token, exam.id)
+          return [exam.id, (res.data || []).map((attempt) => enrichAttemptDummy(attempt, exam.duration_minutes))]
+        })
+      )
+      setExamAttemptsMap(Object.fromEntries(attemptsEntries))
+      const studentsRes = await getStudents(token)
+      setStudents(studentsRes.data || [])
+    } catch {
+      flash("Failed to load analytics", "error")
+    } finally {
+      setLoadingAnalytics(false)
     }
-    if (passwordForm.new_password.length < 6) {
-      flash("New password must be at least 6 characters", "error")
-      return
-    }
-    if (passwordForm.new_password !== passwordForm.confirm_password) {
-      flash("New password and confirm password do not match", "error")
-      return
-    }
+  }
 
+  async function handlePasswordSave(data) {
     setPasswordLoading(true)
     try {
-      await changePassword(token, {
-        current_password: passwordForm.current_password,
-        new_password: passwordForm.new_password,
-      })
-      setPasswordForm({ current_password: "", new_password: "", confirm_password: "" })
+      await changePassword(token, data)
+      setChangePasswordOpen(false)
       flash("Password updated")
     } catch (err) {
-      flash(err?.response?.data?.detail || "Failed to update password", "error")
+      throw err
     } finally {
       setPasswordLoading(false)
+    }
+  }
+
+  async function loadTeacherProfile() {
+    setTeacherProfileLoading(true)
+    try {
+      const res = await getTeacherProfile(token)
+      const data = res.data || {}
+      setTeacherProfileForm({
+        employee_id: data.employee_id || "",
+        college_email: data.college_email || "",
+        department: data.department || "",
+        designation: data.designation || "",
+        subjects: data.subjects || "",
+        office_room: data.office_room || "",
+        year_of_joining: data.year_of_joining != null ? String(data.year_of_joining) : "",
+      })
+    } catch {
+      flash("Failed to load teacher profile", "error")
+    } finally {
+      setTeacherProfileLoading(false)
+    }
+  }
+
+  async function handleTeacherProfileSave() {
+    setTeacherProfileSaving(true)
+    try {
+      const normalizedYear = teacherProfileForm.year_of_joining === ""
+        ? null
+        : parseInt(teacherProfileForm.year_of_joining, 10)
+
+      await updateTeacherProfile(token, {
+        ...teacherProfileForm,
+        year_of_joining: Number.isNaN(normalizedYear) ? null : normalizedYear,
+      })
+      flash("Teacher profile updated")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to update teacher profile", "error")
+    } finally {
+      setTeacherProfileSaving(false)
+    }
+  }
+
+  async function handleProfilePictureUpload(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setProfilePictureUploading(true)
+    try {
+      const res = await uploadProfilePicture(token, file)
+      setUser((prev) => ({
+        ...(prev || {}),
+        profile_picture_path: res.data?.profile_picture_path || prev?.profile_picture_path,
+      }))
+      flash("Profile picture updated")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to upload profile picture", "error")
+    } finally {
+      event.target.value = ""
+      setProfilePictureUploading(false)
+    }
+  }
+
+  async function handleProfilePictureDelete() {
+    setProfilePictureDeleting(true)
+    try {
+      await deleteProfilePicture(token)
+      setUser((prev) => ({ ...(prev || {}), profile_picture_path: null }))
+      flash("Profile picture removed")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to remove profile picture", "error")
+    } finally {
+      setProfilePictureDeleting(false)
     }
   }
 
@@ -235,16 +421,94 @@ export default function TeacherDashboard() {
       || (examFilters.status === "draft" && !exam.published)
     return byQuery && bySubject && byStatus
   })
+  const allTeacherAttempts = exams.flatMap((exam) =>
+    (examAttemptsMap[exam.id] || []).map((attempt) => ({
+      ...attempt,
+      exam_id: exam.id,
+      exam_title: exam.title,
+      exam_duration: exam.duration_minutes,
+    }))
+  )
+  const studentStatsMap = allTeacherAttempts.reduce((acc, attempt) => {
+    const key = attempt.student_id
+    if (!acc[key]) {
+      acc[key] = {
+        tests: 0,
+        totalScore: 0,
+        totalTime: 0,
+        totalRevisions: 0,
+        totalJumps: 0,
+        behaviorCounts: {},
+      }
+    }
+    acc[key].tests += 1
+    acc[key].totalScore += (attempt.score || 0)
+    acc[key].totalTime += (attempt.avg_time_sec || 0)
+    acc[key].totalRevisions += (attempt.revisions || 0)
+    acc[key].totalJumps += (attempt.navigation_jumps || 0)
+    acc[key].behaviorCounts[attempt.behavior] = (acc[key].behaviorCounts[attempt.behavior] || 0) + 1
+    return acc
+  }, {})
+
+  const studentRows = students.map((student) => {
+    const stats = studentStatsMap[student.id]
+    if (!stats) {
+      return {
+        ...student,
+        tests: 0,
+        avgScore: 0,
+        avgTime: 0,
+        avgRevisions: 0,
+        avgJumps: 0,
+        behavior: "N/A",
+      }
+    }
+    const behavior = Object.entries(stats.behaviorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "N/A"
+    return {
+      ...student,
+      tests: stats.tests,
+      avgScore: Math.round(stats.totalScore / stats.tests),
+      avgTime: Math.round(stats.totalTime / stats.tests),
+      avgRevisions: Number((stats.totalRevisions / stats.tests).toFixed(1)),
+      avgJumps: Number((stats.totalJumps / stats.tests).toFixed(1)),
+      behavior,
+    }
+  })
+
+  const filteredStudentRows = studentRows.filter((row) => {
+    const query = studentFilters.query.trim().toLowerCase()
+    const byQuery = !query
+      || row.name.toLowerCase().includes(query)
+      || row.email.toLowerCase().includes(query)
+    const byBehavior = studentFilters.behavior === "all" || row.behavior === studentFilters.behavior
+    const byParticipation = studentFilters.participation === "all"
+      || (studentFilters.participation === "attempted" && row.tests > 0)
+      || (studentFilters.participation === "not_attempted" && row.tests === 0)
+    return byQuery && byBehavior && byParticipation
+  })
+
+  const selectedStudent = filteredStudentRows.find((s) => s.id === selectedStudentId)
+    || studentRows.find((s) => s.id === selectedStudentId)
+    || null
+
+  const selectedStudentAttempts = selectedStudent
+    ? allTeacherAttempts.filter((attempt) => attempt.student_id === selectedStudent.id)
+    : []
 
   const navItems = [
-    { key: "profile",   label: "Profile",   Icon: User },
     { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
+    { key: "profile",   label: "Profile",   Icon: User },
     { key: "exams",     label: "My Exams",  Icon: BookOpen },
+    { key: "analytics", label: "Analytics", Icon: BarChart3 },
   ]
 
   function goTab(key) {
     setActiveTab(key)
     if (key !== "exams") setReorderMode(false)
+    if (key !== "analytics") {
+      setSelectedExamAnalytics(null)
+      setSelectedStudentId(null)
+    }
     setSidebarOpen(false)
     setProfileMenuOpen(false)
   }
@@ -254,6 +518,89 @@ export default function TeacherDashboard() {
     onDelete: (id) => setDeleteConfirm(id),
     onTogglePublish: handleTogglePublish,
     onQuestions: (id) => navigate(`/dashboard/teacher/exam/${id}/questions`),
+  }
+
+  function buildExamAnalytics(exam) {
+    if (!exam) return null
+    const attempts = examAttemptsMap[exam.id] || []
+    const totalAttemptsCount = attempts.length
+    const uniqueStudents = new Set(attempts.map((a) => a.student_id)).size
+    const avgScore = totalAttemptsCount ? Math.round(attempts.reduce((sum, a) => sum + (a.score || 0), 0) / totalAttemptsCount) : 0
+    const completionRate = totalAttemptsCount
+      ? Math.round((attempts.filter((a) => !!a.submitted_at).length / totalAttemptsCount) * 100)
+      : 0
+    const avgTimeTakenSec = totalAttemptsCount
+      ? Math.round(attempts.reduce((sum, a) => sum + (a.avg_time_sec || 0), 0) / totalAttemptsCount)
+      : 0
+    const anomalyFlags = attempts.filter((a) => a.anomaly).length
+
+    const behaviorDistribution = BEHAVIOR_LABELS.map((label) => ({
+      label,
+      value: attempts.filter((a) => a.behavior === label).length,
+    }))
+
+    const questionCount = Math.max(exam.question_count || 0, 8)
+    const spikeQuestion = (hashText(exam.id) % questionCount) + 1
+    const timePerQuestion = Array.from({ length: questionCount }).map((_, idx) => {
+      const qNo = idx + 1
+      const base = 22 + ((hashText(`${exam.id}-${qNo}`) % 13))
+      const spikeBoost = qNo === spikeQuestion ? 35 : 0
+      return { question: `Q${qNo}`, avg_time_sec: base + spikeBoost }
+    })
+
+    const revisionFrequency = [
+      { range: "0", value: attempts.filter((a) => (a.revisions || 0) === 0).length },
+      { range: "1-2", value: attempts.filter((a) => (a.revisions || 0) >= 1 && (a.revisions || 0) <= 2).length },
+      { range: "3-5", value: attempts.filter((a) => (a.revisions || 0) >= 3 && (a.revisions || 0) <= 5).length },
+      { range: ">5", value: attempts.filter((a) => (a.revisions || 0) > 5).length },
+    ]
+
+    const navigationPattern = [
+      { band: "Low (0-2)", value: attempts.filter((a) => (a.navigation_jumps || 0) <= 2).length },
+      { band: "Medium (3-5)", value: attempts.filter((a) => (a.navigation_jumps || 0) >= 3 && (a.navigation_jumps || 0) <= 5).length },
+      { band: "High (6+)", value: attempts.filter((a) => (a.navigation_jumps || 0) >= 6).length },
+    ]
+
+    const scoreDistribution = [
+      { range: "0-20", value: attempts.filter((a) => (a.score || 0) <= 20).length },
+      { range: "21-40", value: attempts.filter((a) => (a.score || 0) >= 21 && (a.score || 0) <= 40).length },
+      { range: "41-60", value: attempts.filter((a) => (a.score || 0) >= 41 && (a.score || 0) <= 60).length },
+      { range: "61-80", value: attempts.filter((a) => (a.score || 0) >= 61 && (a.score || 0) <= 80).length },
+      { range: "81-100", value: attempts.filter((a) => (a.score || 0) >= 81).length },
+    ]
+
+    const studentTable = attempts
+      .map((attempt) => ({
+        studentName: attempt.student_name || "Unknown",
+        studentEmail: attempt.student_email || "",
+        score: Math.round(attempt.score || 0),
+        avgTime: attempt.avg_time_sec || 0,
+        revisions: attempt.revisions || 0,
+        behavior: attempt.behavior,
+      }))
+      .sort((a, b) => b.score - a.score)
+
+    const scatterData = attempts.map((attempt) => ({
+      avgTime: attempt.avg_time_sec || 0,
+      accuracy: Math.round(attempt.score || 0),
+      anomaly: !!attempt.anomaly,
+    }))
+
+    return {
+      totalAttemptsCount,
+      uniqueStudents,
+      avgScore,
+      completionRate,
+      avgTimeTakenSec,
+      anomalyFlags,
+      behaviorDistribution,
+      timePerQuestion,
+      revisionFrequency,
+      navigationPattern,
+      scoreDistribution,
+      studentTable,
+      scatterData,
+    }
   }
 
   return (
@@ -297,7 +644,7 @@ export default function TeacherDashboard() {
         </nav>
         <div className="mt-auto px-3 pb-4 border-t border-gray-100 pt-3 shrink-0 bg-gradient-to-b from-white to-gray-50/70 lg:mb-0">
           <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-3 py-2 mb-1`}>
-            <Avatar name={user?.name} />
+            <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
             {!sidebarCollapsed && (
               <div className="min-w-0">
                 <p className="text-sm font-bold text-[#1a1a2e] truncate">{user?.name}</p>
@@ -327,35 +674,52 @@ export default function TeacherDashboard() {
           <h1 className="hidden lg:block text-base font-bold text-[#1a1a2e]">
             {navItems.find(n => n.key === activeTab)?.label}
           </h1>
-          <div className="ml-auto relative" onMouseLeave={() => setProfileMenuOpen(false)}>
-            <button
-              onClick={() => setProfileMenuOpen((v) => !v)}
-              onMouseEnter={() => setProfileMenuOpen(true)}
-              className="flex items-center gap-2 hover:bg-gray-50 rounded-xl px-3 py-1.5 transition-colors border border-transparent hover:border-gray-100"
-            >
-              <Avatar name={user?.name} />
-              <div className="hidden sm:block text-left">
-                <p className="text-sm font-semibold text-[#1a1a2e] leading-tight">{user?.name}</p>
-                <p className="text-[10px] uppercase tracking-wider text-[#ff4b2b] font-semibold">Teacher</p>
-              </div>
-              <ChevronDown size={14} className={`text-gray-400 transition-transform ${profileMenuOpen ? "rotate-180" : ""}`} />
-            </button>
-            {profileMenuOpen && (
-              <div className="absolute right-0 top-12 w-44 bg-white border border-gray-100 shadow-xl rounded-xl p-1.5 z-40 animate-in fade-in-0 zoom-in-95 duration-150">
-                <button
-                  onClick={() => goTab("profile")}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 rounded-lg"
-                >
-                  <User size={15} /> Profile
-                </button>
-                <button
-                  onClick={handleLogout}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-red-500 hover:bg-red-50 rounded-lg"
-                >
-                  <LogOut size={15} /> Logout
-                </button>
-              </div>
-            )}
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative" onMouseLeave={() => setProfileMenuOpen(false)}>
+              <button
+                onClick={() => setProfileMenuOpen((v) => !v)}
+                onMouseEnter={() => setProfileMenuOpen(true)}
+                className="flex items-center gap-2 hover:bg-gray-50 rounded-xl px-3 py-1.5 transition-colors border border-transparent hover:border-gray-100"
+              >
+                <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
+                <div className="hidden sm:block text-left">
+                  <p className="text-sm font-semibold text-[#1a1a2e] leading-tight">{user?.name}</p>
+                  <p className="text-[10px] uppercase tracking-wider text-[#ff4b2b] font-semibold">Teacher</p>
+                </div>
+                <ChevronDown size={14} className={`text-gray-400 transition-transform ${profileMenuOpen ? "rotate-180" : ""}`} />
+              </button>
+              {profileMenuOpen && (
+                <div className="absolute right-0 top-12 w-44 bg-white border border-gray-100 shadow-xl rounded-xl p-1.5 z-40 animate-in fade-in-0 zoom-in-95 duration-150">
+                  <button
+                    onClick={() => goTab("profile")}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 rounded-lg"
+                  >
+                    <User size={15} /> Profile
+                  </button>
+                  {user?.auth_provider === "local" && (
+                    <button
+                      onClick={() => {
+                        setChangePasswordOpen(true)
+                        setProfileMenuOpen(false)
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 rounded-lg"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" className="w-[15px] h-[15px]" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="3" y="11" width="18" height="10" rx="2" />
+                        <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+                      </svg>
+                      Change Password
+                    </button>
+                  )}
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-red-500 hover:bg-red-50 rounded-lg"
+                  >
+                    <LogOut size={15} /> Logout
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -479,75 +843,505 @@ export default function TeacherDashboard() {
             </div>
           )}
 
+          {/* ─ Analytics ─ */}
+          {activeTab === "analytics" && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="text-2xl font-extrabold text-[#1a1a2e]">Analytics</h2>
+                  <p className="text-gray-500 text-sm mt-0.5">Exam performance + behavior analytics (demo scaffold).</p>
+                </div>
+                <div className="inline-flex bg-white border border-gray-200 rounded-xl p-1">
+                  <button
+                    onClick={() => { setAnalyticsTab("exam"); setSelectedStudentId(null) }}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${analyticsTab === "exam" ? "bg-[#1a1a2e] text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    Exam Analytics
+                  </button>
+                  <button
+                    onClick={() => { setAnalyticsTab("student"); setSelectedExamAnalytics(null) }}
+                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${analyticsTab === "student" ? "bg-[#1a1a2e] text-white" : "text-gray-600 hover:bg-gray-50"}`}
+                  >
+                    Student Analytics
+                  </button>
+                </div>
+              </div>
+
+              {loadingAnalytics ? (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-gray-400 text-sm text-center">Loading analytics…</div>
+              ) : analyticsTab === "exam" ? (
+                selectedExamAnalytics ? (
+                  (() => {
+                    const exam = exams.find((e) => e.id === selectedExamAnalytics)
+                    const analytics = buildExamAnalytics(exam)
+                    if (!exam || !analytics) {
+                      return <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-sm text-gray-500">Exam analytics unavailable.</div>
+                    }
+                    return (
+                      <div className="space-y-6">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div>
+                            <h3 className="text-xl font-extrabold text-[#1a1a2e]">{exam.title}</h3>
+                            <p className="text-sm text-gray-500">{exam.subject} · {exam.duration_minutes} min · {analytics.totalAttemptsCount} attempts</p>
+                          </div>
+                          <button
+                            onClick={() => setSelectedExamAnalytics(null)}
+                            className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                          >
+                            Back to Exam Cards
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                          <StatCard icon="👥" value={analytics.uniqueStudents} label="Students Attempted" gradient="from-blue-400 to-blue-600" className="!p-4" />
+                          <StatCard icon="🎯" value={`${analytics.avgScore}%`} label="Average Score" gradient="from-emerald-400 to-emerald-600" className="!p-4" />
+                          <StatCard icon="✅" value={`${analytics.completionRate}%`} label="Completion Rate" gradient="from-violet-400 to-violet-600" className="!p-4" />
+                          <StatCard icon="⏱️" value={`${analytics.avgTimeTakenSec}s`} label="Avg Time" gradient="from-amber-400 to-amber-600" className="!p-4" />
+                          <StatCard icon="🚩" value={analytics.anomalyFlags} label="Anomaly Flags" gradient="from-rose-400 to-rose-600" className="!p-4" />
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                          <ChartCard title="Behavior Classification Distribution">
+                            <ResponsiveContainer width="100%" height={280}>
+                              <PieChart>
+                                <Pie data={analytics.behaviorDistribution} dataKey="value" nameKey="label" outerRadius={90}>
+                                  {analytics.behaviorDistribution.map((entry) => (
+                                    <Cell key={entry.label} fill={entry.label === "Fast_Response" ? "#10b981" : entry.label === "High_Revision" ? "#f59e0b" : entry.label === "Deliberative" ? "#3b82f6" : "#ef4444"} />
+                                  ))}
+                                </Pie>
+                                <Tooltip />
+                                <Legend />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </ChartCard>
+
+                          <ChartCard title="Time Spent per Question">
+                            <ResponsiveContainer width="100%" height={280}>
+                              <LineChart data={analytics.timePerQuestion}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                <XAxis dataKey="question" />
+                                <YAxis />
+                                <Tooltip />
+                                <Line type="monotone" dataKey="avg_time_sec" stroke="#ff4b2b" strokeWidth={2.5} dot={{ r: 3 }} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </ChartCard>
+
+                          <ChartCard title="Revision Frequency">
+                            <ResponsiveContainer width="100%" height={260}>
+                              <BarChart data={analytics.revisionFrequency}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                <XAxis dataKey="range" />
+                                <YAxis allowDecimals={false} />
+                                <Tooltip />
+                                <Bar dataKey="value" fill="#6366f1" radius={[8, 8, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </ChartCard>
+
+                          <ChartCard title="Navigation Patterns">
+                            <ResponsiveContainer width="100%" height={260}>
+                              <BarChart data={analytics.navigationPattern}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                <XAxis dataKey="band" />
+                                <YAxis allowDecimals={false} />
+                                <Tooltip />
+                                <Bar dataKey="value" fill="#14b8a6" radius={[8, 8, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </ChartCard>
+
+                          <ChartCard title="Score Distribution">
+                            <ResponsiveContainer width="100%" height={260}>
+                              <BarChart data={analytics.scoreDistribution}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                <XAxis dataKey="range" />
+                                <YAxis allowDecimals={false} />
+                                <Tooltip />
+                                <Bar dataKey="value" fill="#f97316" radius={[8, 8, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </ChartCard>
+
+                          <ChartCard title="Anomaly Detection (Dummy Scatter)">
+                            <ResponsiveContainer width="100%" height={260}>
+                              <ScatterChart>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                <XAxis type="number" dataKey="avgTime" name="Average Time" unit="s" />
+                                <YAxis type="number" dataKey="accuracy" name="Accuracy" unit="%" />
+                                <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+                                <Scatter name="Attempts" data={analytics.scatterData} fill="#3b82f6" />
+                              </ScatterChart>
+                            </ResponsiveContainer>
+                          </ChartCard>
+                        </div>
+
+                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                          <div className="px-5 py-4 border-b border-gray-100">
+                            <h4 className="font-bold text-[#1a1a2e]">Student Behavior Table</h4>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead className="bg-gray-50 text-gray-500">
+                                <tr>
+                                  <th className="text-left px-4 py-3 font-semibold">Student</th>
+                                  <th className="text-left px-4 py-3 font-semibold">Score</th>
+                                  <th className="text-left px-4 py-3 font-semibold">Avg Time</th>
+                                  <th className="text-left px-4 py-3 font-semibold">Revisions</th>
+                                  <th className="text-left px-4 py-3 font-semibold">Behavior Label</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {analytics.studentTable.map((row, idx) => (
+                                  <tr key={`${row.studentEmail}-${idx}`} className="border-t border-gray-100">
+                                    <td className="px-4 py-3">
+                                      <p className="font-semibold text-[#1a1a2e]">{row.studentName}</p>
+                                      <p className="text-xs text-gray-400">{row.studentEmail}</p>
+                                    </td>
+                                    <td className="px-4 py-3 text-[#1a1a2e] font-semibold">{row.score}%</td>
+                                    <td className="px-4 py-3 text-gray-600">{row.avgTime}s</td>
+                                    <td className="px-4 py-3 text-gray-600">{row.revisions}</td>
+                                    <td className="px-4 py-3">
+                                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{row.behavior}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {analytics.studentTable.length === 0 && (
+                                  <tr>
+                                    <td className="px-4 py-6 text-gray-400" colSpan={5}>No attempts available for this exam.</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })()
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {exams.map((exam) => {
+                        const quick = buildExamAnalytics(exam)
+                        const dominantBehavior = quick?.behaviorDistribution
+                          ?.slice()
+                          .sort((a, b) => b.value - a.value)?.[0]?.label || "N/A"
+
+                        return (
+                          <div key={exam.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+                            <div>
+                              <p className="text-xs text-gray-400 font-semibold uppercase">{exam.subject}</p>
+                              <h3 className="font-bold text-[#1a1a2e] text-lg mt-1">{exam.title}</h3>
+                              <p className="text-sm text-gray-500 mt-1">{exam.duration_minutes} min · {exam.question_count || 0} questions · {exam.attempt_count || 0} attempts</p>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700">
+                                Attempts: {quick?.totalAttemptsCount || 0}
+                              </span>
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700">
+                                Behavior: {dominantBehavior}
+                              </span>
+                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700">
+                                Anomalies: {quick?.anomalyFlags || 0}
+                              </span>
+                            </div>
+
+                            <button
+                              onClick={() => setSelectedExamAnalytics(exam.id)}
+                              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-[#1a1a2e] text-white hover:bg-[#2a2a46]"
+                            >
+                              View Analytics
+                            </button>
+                          </div>
+                        )
+                      })}
+                      {exams.length === 0 && (
+                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-gray-500 text-sm">Create an exam first to view analytics.</div>
+                      )}
+                    </div>
+
+                    {exams.length > 0 && (
+                      <div className="bg-white rounded-xl border border-gray-100 px-4 py-3 text-xs text-gray-600 flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-gray-700 mr-1">Behavior Legend:</span>
+                        <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-semibold">Fast_Response</span>
+                        <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700 font-semibold">High_Revision</span>
+                        <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 font-semibold">Deliberative</span>
+                        <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-semibold">Disengaged</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <Field
+                        label="Search Student"
+                        value={studentFilters.query}
+                        onChange={(v) => setStudentFilters((p) => ({ ...p, query: v }))}
+                        placeholder="Name or email"
+                      />
+                      <Field
+                        label="Behavior"
+                        value={studentFilters.behavior}
+                        onChange={(v) => setStudentFilters((p) => ({ ...p, behavior: v }))}
+                        type="select"
+                        options={[{ value: "all", label: "All" }, ...BEHAVIOR_LABELS.map((b) => ({ value: b, label: b }))]}
+                      />
+                      <Field
+                        label="Participation"
+                        value={studentFilters.participation}
+                        onChange={(v) => setStudentFilters((p) => ({ ...p, participation: v }))}
+                        type="select"
+                        options={[
+                          { value: "all", label: "All" },
+                          { value: "attempted", label: "Attempted" },
+                          { value: "not_attempted", label: "Not Attempted" },
+                        ]}
+                      />
+                      <div className="flex items-end">
+                        <button
+                          onClick={() => setStudentFilters({ query: "", behavior: "all", participation: "all" })}
+                          className="w-full py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          Reset Filters
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div className="px-5 py-4 border-b border-gray-100">
+                      <h4 className="font-bold text-[#1a1a2e]">Students</h4>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="text-left px-4 py-3 font-semibold">Student</th>
+                            <th className="text-left px-4 py-3 font-semibold">Tests Taken</th>
+                            <th className="text-left px-4 py-3 font-semibold">Avg Score</th>
+                            <th className="text-left px-4 py-3 font-semibold">Avg Time</th>
+                            <th className="text-left px-4 py-3 font-semibold">Behavior</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredStudentRows.map((row) => (
+                            <tr
+                              key={row.id}
+                              onClick={() => setSelectedStudentId(row.id)}
+                              className={`border-t border-gray-100 cursor-pointer ${selectedStudentId === row.id ? "bg-orange-50" : "hover:bg-gray-50"}`}
+                            >
+                              <td className="px-4 py-3">
+                                <p className="font-semibold text-[#1a1a2e]">{row.name}</p>
+                                <p className="text-xs text-gray-400">{row.email}</p>
+                              </td>
+                              <td className="px-4 py-3 text-gray-600">{row.tests}</td>
+                              <td className="px-4 py-3 text-gray-600">{row.tests ? `${row.avgScore}%` : "—"}</td>
+                              <td className="px-4 py-3 text-gray-600">{row.tests ? `${row.avgTime}s` : "—"}</td>
+                              <td className="px-4 py-3 text-gray-600">{row.behavior}</td>
+                            </tr>
+                          ))}
+                          {filteredStudentRows.length === 0 && (
+                            <tr>
+                              <td className="px-4 py-6 text-gray-400" colSpan={5}>No students match these filters.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {selectedStudent && (
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+                      <div>
+                        <h4 className="font-bold text-[#1a1a2e] text-lg">{selectedStudent.name}</h4>
+                        <p className="text-sm text-gray-500">{selectedStudent.email}</p>
+                      </div>
+                      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                        <StatCard icon="🧪" value={selectedStudent.tests} label="Tests Taken" gradient="from-blue-400 to-blue-600" className="!p-4" />
+                        <StatCard icon="🎯" value={selectedStudent.tests ? `${selectedStudent.avgScore}%` : "—"} label="Avg Score" gradient="from-emerald-400 to-emerald-600" className="!p-4" />
+                        <StatCard icon="⏱️" value={selectedStudent.tests ? `${selectedStudent.avgTime}s` : "—"} label="Avg Time" gradient="from-amber-400 to-amber-600" className="!p-4" />
+                        <StatCard icon="🔁" value={selectedStudent.tests ? selectedStudent.avgRevisions : "—"} label="Avg Revisions" gradient="from-violet-400 to-violet-600" className="!p-4" />
+                        <StatCard icon="🧠" value={selectedStudent.behavior} label="Behavior" gradient="from-rose-400 to-rose-600" className="!p-4" />
+                      </div>
+                      <ChartCard title="Scores Across Teacher Exams">
+                        <ResponsiveContainer width="100%" height={250}>
+                          <BarChart data={selectedStudentAttempts.map((a) => ({ exam: a.exam_title, score: Math.round(a.score || 0) }))}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                            <XAxis dataKey="exam" hide={selectedStudentAttempts.length > 5} />
+                            <YAxis domain={[0, 100]} />
+                            <Tooltip />
+                            <Bar dataKey="score" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </ChartCard>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ─ Profile ─ */}
           {activeTab === "profile" && (
-            <div className="space-y-6 max-w-xl">
+            <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-extrabold text-[#1a1a2e]">Profile</h2>
-                <p className="text-gray-500 text-sm mt-0.5">Manage your account details.</p>
+                <p className="text-gray-500 text-sm mt-0.5">Manage your personal and professional account details.</p>
               </div>
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
-                <div className="flex items-center gap-4">
-                  <Avatar name={user?.name} large />
-                  <div>
-                    <p className="font-bold text-[#1a1a2e] text-lg">{user?.name}</p>
-                    <p className="text-xs font-semibold text-[#ff4b2b] uppercase tracking-wider">Teacher</p>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 items-start">
+                <div className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+                  <div className="flex items-center gap-4">
+                    <Avatar name={user?.name} imagePath={user?.profile_picture_path} large onClick={setImageModalSrc} />
+                    <div>
+                      <p className="font-bold text-[#1a1a2e] text-lg">{user?.name}</p>
+                      <p className="text-xs font-semibold text-[#ff4b2b] uppercase tracking-wider">Teacher</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                      {profilePictureUploading ? "Uploading…" : "Upload Profile Picture"}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={handleProfilePictureUpload}
+                        disabled={profilePictureUploading}
+                        className="hidden"
+                      />
+                    </label>
+                    {user?.profile_picture_path && (
+                      <button
+                        type="button"
+                        onClick={handleProfilePictureDelete}
+                        disabled={profilePictureDeleting}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-60"
+                        title={profilePictureDeleting ? "Removing picture" : "Remove picture"}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                  <hr className="border-gray-100" />
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Field label="Full Name" value={profileForm.name}
+                      onChange={(v) => setProfileForm(p => ({ ...p, name: v }))} placeholder="Your full name" />
+                    <Field label="Email Address" type="email" value={profileForm.email}
+                      onChange={(v) => setProfileForm(p => ({ ...p, email: v }))} placeholder="you@example.com" />
+                    <Field
+                      label="Year of Joining"
+                      type="number"
+                      value={teacherProfileForm.year_of_joining}
+                      onChange={(v) => setTeacherProfileForm((p) => ({ ...p, year_of_joining: v }))}
+                      placeholder="2022"
+                    />
+                  </div>
+                  <button onClick={handleProfileSave} disabled={profileLoading}
+                    className="w-full md:w-auto px-6 py-2.5 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white font-semibold rounded-xl hover:opacity-90 transition disabled:opacity-60">
+                    {profileLoading ? "Saving…" : "Save Basic Details"}
+                  </button>
+                </div>
+
+                <div className="bg-gradient-to-br from-[#1a1a2e] to-[#2a2a46] rounded-2xl p-6 text-white shadow-sm">
+                  <p className="text-xs uppercase tracking-wider text-white/70 font-semibold">Teacher ID Card</p>
+                  <div className="mt-4 flex items-center gap-3">
+                    <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
+                    <div>
+                      <p className="font-bold text-lg leading-tight">{user?.name}</p>
+                      <p className="text-sm text-white/70">{teacherProfileForm.college_email || "No college email set"}</p>
+                    </div>
+                  </div>
+                  <div className="mt-5 space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-white/70">Role</span><span className="font-semibold">Teacher</span></div>
+                    <div className="flex justify-between"><span className="text-white/70">Exams</span><span className="font-semibold">{totalExams}</span></div>
+                    {teacherProfileForm.employee_id && (
+                      <div className="flex justify-between"><span className="text-white/70">Employee ID</span><span className="font-semibold">{teacherProfileForm.employee_id}</span></div>
+                    )}
+                    {teacherProfileForm.department && (
+                      <div className="flex justify-between"><span className="text-white/70">Department</span><span className="font-semibold text-right">{teacherProfileForm.department}</span></div>
+                    )}
+                    {teacherProfileForm.designation && (
+                      <div className="flex justify-between"><span className="text-white/70">Designation</span><span className="font-semibold text-right">{teacherProfileForm.designation}</span></div>
+                    )}
+                    {teacherProfileForm.office_room && (
+                      <div className="flex justify-between"><span className="text-white/70">Office</span><span className="font-semibold text-right">{teacherProfileForm.office_room}</span></div>
+                    )}
+                    {teacherProfileForm.subjects && (
+                      <div>
+                        <p className="text-white/70">Subjects</p>
+                        <p className="font-semibold leading-snug">{teacherProfileForm.subjects}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
-                <hr className="border-gray-100" />
-                <div className="space-y-4">
-                  <Field label="Full Name" value={profileForm.name}
-                    onChange={(v) => setProfileForm(p => ({ ...p, name: v }))} placeholder="Your full name" />
-                  <Field label="Email Address" type="email" value={profileForm.email}
-                    onChange={(v) => setProfileForm(p => ({ ...p, email: v }))} placeholder="you@example.com" />
-                </div>
-                <button onClick={handleProfileSave} disabled={profileLoading}
-                  className="w-full py-2.5 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white font-semibold rounded-xl hover:opacity-90 transition disabled:opacity-60">
-                  {profileLoading ? "Saving…" : "Save Changes"}
-                </button>
               </div>
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-3">
-                <h3 className="font-bold text-[#1a1a2e] text-sm">Change Password</h3>
-                {user?.auth_provider === "local" ? (
-                  <>
+
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="font-bold text-[#1a1a2e] text-base">Professional Details</h3>
+                    <p className="text-sm text-gray-500">Use these fields for teacher identity and subject mapping.</p>
+                  </div>
+                  {teacherProfileLoading && <span className="text-xs text-gray-400 font-semibold">Loading…</span>}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <Field
+                    label="Employee ID"
+                    value={teacherProfileForm.employee_id}
+                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, employee_id: v }))}
+                    placeholder="EMP-1024"
+                  />
+                  <Field
+                    label="College Email"
+                    type="email"
+                    value={teacherProfileForm.college_email}
+                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, college_email: v }))}
+                    placeholder="teacher@college.edu"
+                  />
+                  <Field
+                    label="Department"
+                    value={teacherProfileForm.department}
+                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, department: v }))}
+                    placeholder="Computer Science"
+                  />
+                  <Field
+                    label="Designation"
+                    value={teacherProfileForm.designation}
+                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, designation: v }))}
+                    placeholder="Assistant Professor"
+                  />
+                  <div className="md:col-span-2">
                     <Field
-                      label="Current Password"
-                      type="password"
-                      value={passwordForm.current_password}
-                      onChange={(v) => setPasswordForm(p => ({ ...p, current_password: v }))}
-                      placeholder="Enter current password"
+                      label="Subjects"
+                      value={teacherProfileForm.subjects}
+                      onChange={(v) => setTeacherProfileForm((p) => ({ ...p, subjects: v }))}
+                      placeholder="DBMS, Data Structures, Operating Systems"
                     />
-                    <Field
-                      label="New Password"
-                      type="password"
-                      value={passwordForm.new_password}
-                      onChange={(v) => setPasswordForm(p => ({ ...p, new_password: v }))}
-                      placeholder="Minimum 6 characters"
-                    />
-                    <Field
-                      label="Confirm New Password"
-                      type="password"
-                      value={passwordForm.confirm_password}
-                      onChange={(v) => setPasswordForm(p => ({ ...p, confirm_password: v }))}
-                      placeholder="Re-enter new password"
-                    />
-                    <button
-                      onClick={handlePasswordSave}
-                      disabled={passwordLoading}
-                      className="w-full py-2.5 bg-[#1a1a2e] text-white font-semibold text-sm rounded-xl hover:bg-[#252542] transition disabled:opacity-60"
-                    >
-                      {passwordLoading ? "Updating…" : "Update Password"}
-                    </button>
-                  </>
-                ) : (
-                  <p className="text-sm text-gray-500">Password is managed by your sign-in provider.</p>
-                )}
+                  </div>
+                  <Field
+                    label="Office Room"
+                    value={teacherProfileForm.office_room}
+                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, office_room: v }))}
+                    placeholder="Block B · Room 214"
+                  />
+                </div>
+
+                <button
+                  onClick={handleTeacherProfileSave}
+                  disabled={teacherProfileSaving || teacherProfileLoading}
+                  className="w-full md:w-auto px-6 py-2.5 bg-[#1a1a2e] text-white font-semibold rounded-xl hover:bg-[#252542] transition disabled:opacity-60"
+                >
+                  {teacherProfileSaving ? "Saving…" : "Save Professional Details"}
+                </button>
               </div>
 
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-3">
                 <h3 className="font-bold text-[#1a1a2e] text-sm">Account Info</h3>
                 {[
-                  ["Provider", user?.auth_provider || "local"],
+                  ["Personal Email", profileForm.email || "—"],
                   ["Role", user?.role],
                   ["Exams", totalExams],
                   ["Questions Set", totalQuestions],
@@ -606,6 +1400,17 @@ export default function TeacherDashboard() {
           {toast.message}
         </div>
       )}
+
+      {imageModalSrc && (
+        <ImagePreviewModal src={imageModalSrc} onClose={() => setImageModalSrc(null)} />
+      )}
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        onSubmit={handlePasswordSave}
+        loading={passwordLoading}
+      />
     </div>
   )
 }
@@ -715,8 +1520,27 @@ function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onQuestions, reorde
 // ─────────────────────────────────────────────
 // Shared helpers
 // ─────────────────────────────────────────────
-function Avatar({ name, large = false }) {
+function Avatar({ name, imagePath, large = false, onClick }) {
+  const [imageFailed, setImageFailed] = useState(false)
   const cls = large ? "w-16 h-16 text-2xl" : "w-9 h-9 text-sm"
+  const src = toAbsoluteImageUrl(imagePath)
+
+  useEffect(() => {
+    setImageFailed(false)
+  }, [imagePath])
+
+  if (src && !imageFailed) {
+    return (
+      <img
+        src={src}
+        alt={name || "Profile"}
+        onClick={() => onClick && onClick(src)}
+        onError={() => setImageFailed(true)}
+        className={`${cls} rounded-full object-cover shrink-0 ${onClick ? "cursor-zoom-in" : ""}`}
+      />
+    )
+  }
+
   return (
     <div className={`${cls} rounded-full bg-gradient-to-br from-[#ff4b2b] to-[#ff416c] flex items-center justify-center text-white font-bold shrink-0`}>
       {name?.[0]?.toUpperCase() ?? "T"}
@@ -734,6 +1558,15 @@ function StatCard({ icon, value, label, gradient, className = "" }) {
         <p className="text-2xl font-extrabold text-[#1a1a2e]">{value}</p>
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-0.5">{label}</p>
       </div>
+    </div>
+  )
+}
+
+function ChartCard({ title, children }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 lg:p-5">
+      <h4 className="font-bold text-[#1a1a2e] text-sm mb-4">{title}</h4>
+      {children}
     </div>
   )
 }
@@ -821,6 +1654,22 @@ function Field({ label, value, onChange, placeholder, type = "text", required = 
         <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
           className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-[#1a1a2e] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#ff4b2b]/30 focus:border-[#ff4b2b] transition" />
       )}
+    </div>
+  )
+}
+
+function ImagePreviewModal({ src, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="relative max-w-4xl w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onClose}
+          className="absolute -top-10 right-0 text-white/90 hover:text-white text-sm font-semibold"
+        >
+          Close
+        </button>
+        <img src={src} alt="Preview" className="max-h-[85vh] w-auto max-w-full rounded-2xl border border-white/20" />
+      </div>
     </div>
   )
 }

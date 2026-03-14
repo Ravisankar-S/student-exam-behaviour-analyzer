@@ -3,6 +3,8 @@ import { useAuth } from './context/AuthContext'
 import RoleSelectPage from './pages/RoleSelectPage'
 import AuthPage from './pages/AuthPage'
 import TeacherDashboard from './pages/TeacherDashboard'
+import StudentDashboard from './pages/StudentDashboard'
+import AdminDashboard from './pages/AdminDashboard'
 import ExamQuestionsPage from './pages/ExamQuestionsPage'
 import ClickSpark from './components/ClickSpark'
 
@@ -32,6 +34,22 @@ export default function App() {
         element={
           <ProtectedRoute allowedRole="teacher">
             <TeacherDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/student"
+        element={
+          <ProtectedRoute allowedRole="student">
+            <StudentDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/admin"
+        element={
+          <ProtectedRoute allowedRole="admin">
+            <AdminDashboard />
           </ProtectedRoute>
         }
       />

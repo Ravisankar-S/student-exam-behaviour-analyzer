@@ -21,11 +21,13 @@ class OptionOut(BaseModel):
 
 class QuestionCreate(BaseModel):
     question_text: str
+    question_image_path: Optional[str] = None
     options: List[OptionCreate]
 
 
 class QuestionUpdate(BaseModel):
     question_text: Optional[str] = None
+    question_image_path: Optional[str] = None
     options: Optional[List[OptionCreate]] = None
 
 
@@ -33,6 +35,7 @@ class QuestionOut(BaseModel):
     id: UUID
     assessment_id: UUID
     question_text: str
+    question_image_path: Optional[str]
     order_index: int
     options: List[OptionOut]
 

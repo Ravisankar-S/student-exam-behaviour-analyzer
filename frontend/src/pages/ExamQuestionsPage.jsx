@@ -10,16 +10,22 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import {
   ArrowLeft, Plus, Edit2, Trash2, GripVertical, AlertCircle, X,
-  CheckCircle2, HelpCircle,
+  CheckCircle2, HelpCircle, Image,
   LayoutDashboard, User, Menu, LogOut,
 } from "lucide-react"
 import {
   getAssessment, getQuestions, createQuestion, updateQuestion,
-  deleteQuestion, reorderQuestions,
+  deleteQuestion, reorderQuestions, uploadQuestionImage,
 } from "../api/assessments"
 
 const OPTION_LABELS = ["A", "B", "C", "D"]
-const blankQForm = { question_text: "", options: ["", "", "", ""], correct_index: 0 }
+const blankQForm = { question_text: "", question_image_path: "", options: ["", "", "", ""], correct_index: 0 }
+
+function toAbsoluteImageUrl(path) {
+  if (!path) return null
+  if (path.startsWith("http://") || path.startsWith("https://")) return path
+  return `http://127.0.0.1:8000${path}`
+}
 
 export default function ExamQuestionsPage() {
   const { examId } = useParams()
@@ -37,6 +43,8 @@ export default function ExamQuestionsPage() {
   const [toast, setToast]             = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [questionImageUploading, setQuestionImageUploading] = useState(false)
+  const [imageModalSrc, setImageModalSrc] = useState(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
@@ -81,7 +89,12 @@ export default function ExamQuestionsPage() {
       if (i < 4) opts[i] = o.option_text
       if (o.is_correct) correctIdx = i
     })
-    setQForm({ question_text: q.question_text, options: opts, correct_index: correctIdx })
+    setQForm({
+      question_text: q.question_text,
+      question_image_path: q.question_image_path || "",
+      options: opts,
+      correct_index: correctIdx,
+    })
     setEditingQ(q)
     setShowForm(true)
   }
@@ -98,10 +111,31 @@ export default function ExamQuestionsPage() {
     const correctFilled = filledOptions.findIndex(o => o.originalIndex === qForm.correct_index)
     return {
       question_text: qForm.question_text.trim(),
+      question_image_path: qForm.question_image_path || null,
       options: filledOptions.map((o, i) => ({
         option_text: o.text,
         is_correct: i === (correctFilled >= 0 ? correctFilled : 0),
       })),
+    }
+  }
+
+  async function handleQuestionImageUpload(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setQuestionImageUploading(true)
+    try {
+      const res = await uploadQuestionImage(token, examId, file)
+      setQForm((prev) => ({
+        ...prev,
+        question_image_path: res.data?.question_image_path || prev.question_image_path,
+      }))
+      flash("Question image uploaded")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to upload image", "error")
+    } finally {
+      event.target.value = ""
+      setQuestionImageUploading(false)
     }
   }
 
@@ -134,6 +168,23 @@ export default function ExamQuestionsPage() {
       flash("Question deleted")
     } catch {
       flash("Failed to delete", "error")
+    }
+  }
+
+  async function handleDeleteQuestionImage(question) {
+    try {
+      await updateQuestion(token, examId, question.id, {
+        question_text: question.question_text,
+        question_image_path: "",
+        options: (question.options || []).map((opt) => ({
+          option_text: opt.option_text,
+          is_correct: !!opt.is_correct,
+        })),
+      })
+      await loadQuestions()
+      flash("Question image removed")
+    } catch {
+      flash("Failed to remove question image", "error")
     }
   }
 
@@ -291,6 +342,8 @@ export default function ExamQuestionsPage() {
                       key={q.id}
                       question={q}
                       index={idx}
+                      onViewImage={setImageModalSrc}
+                      onDeleteImage={handleDeleteQuestionImage}
                       onEdit={openEdit}
                       onDelete={(id) => setDeleteConfirm(id)}
                     />
@@ -308,6 +361,9 @@ export default function ExamQuestionsPage() {
           editingQ={editingQ}
           qForm={qForm}
           setQForm={setQForm}
+          onViewImage={setImageModalSrc}
+          onUploadImage={handleQuestionImageUpload}
+          imageUploading={questionImageUploading}
           onClose={() => setShowForm(false)}
           onSubmit={handleSubmit}
           loading={formLoading}
@@ -353,6 +409,10 @@ export default function ExamQuestionsPage() {
           {toast.message}
         </div>
       )}
+
+      {imageModalSrc && (
+        <ImagePreviewModal src={imageModalSrc} onClose={() => setImageModalSrc(null)} />
+      )}
     </div>
   )
 }
@@ -360,7 +420,7 @@ export default function ExamQuestionsPage() {
 // ─────────────────────────────────────────────
 // Sortable question card
 // ─────────────────────────────────────────────
-function QuestionCard({ question, index, onEdit, onDelete }) {
+function QuestionCard({ question, index, onViewImage, onDeleteImage, onEdit, onDelete }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.id })
 
   return (
@@ -381,6 +441,32 @@ function QuestionCard({ question, index, onEdit, onDelete }) {
           {/* Content */}
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-[#1a1a2e] text-sm leading-snug mb-3">{question.question_text}</p>
+            {question.question_image_path && (
+              <div className="mb-3 space-y-2">
+                <img
+                  src={toAbsoluteImageUrl(question.question_image_path)}
+                  alt="Question"
+                  onClick={() => onViewImage?.(toAbsoluteImageUrl(question.question_image_path))}
+                  className="w-full max-h-44 rounded-xl object-cover border border-gray-100 cursor-zoom-in"
+                />
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => onViewImage?.(toAbsoluteImageUrl(question.question_image_path))}
+                    className="text-[11px] font-semibold text-gray-600 hover:text-gray-700"
+                  >
+                    View picture
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteImage?.(question)}
+                    className="text-[11px] font-semibold text-red-500 hover:text-red-600"
+                  >
+                    Delete picture
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               {question.options.map((opt, i) => (
                 <div
@@ -434,7 +520,7 @@ function QuestionCard({ question, index, onEdit, onDelete }) {
 // ─────────────────────────────────────────────
 // Add / Edit question modal
 // ─────────────────────────────────────────────
-function QuestionFormModal({ editingQ, qForm, setQForm, onClose, onSubmit, loading, isValid }) {
+function QuestionFormModal({ editingQ, qForm, setQForm, onViewImage, onUploadImage, imageUploading, onClose, onSubmit, loading, isValid }) {
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl max-h-[90vh] flex flex-col">
@@ -460,6 +546,47 @@ function QuestionFormModal({ editingQ, qForm, setQForm, onClose, onSubmit, loadi
               placeholder="Enter your question here…"
               className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-[#1a1a2e] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#ff4b2b]/30 focus:border-[#ff4b2b] transition resize-none"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Question Picture</label>
+            {qForm.question_image_path ? (
+              <div className="space-y-2">
+                <img
+                  src={toAbsoluteImageUrl(qForm.question_image_path)}
+                  alt="Question preview"
+                  onClick={() => onViewImage?.(toAbsoluteImageUrl(qForm.question_image_path))}
+                  className="w-full max-h-52 rounded-xl border border-gray-200 object-cover cursor-zoom-in"
+                />
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => onViewImage?.(toAbsoluteImageUrl(qForm.question_image_path))}
+                    className="text-xs font-semibold text-gray-600 hover:text-gray-700"
+                  >
+                    View picture
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQForm((p) => ({ ...p, question_image_path: "" }))}
+                    className="text-xs font-semibold text-red-500 hover:text-red-600"
+                  >
+                    Remove picture
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                <Image size={15} /> {imageUploading ? "Uploading…" : "Upload question picture"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={onUploadImage}
+                  disabled={imageUploading}
+                  className="hidden"
+                />
+              </label>
+            )}
           </div>
 
           {/* Options */}
@@ -521,6 +648,22 @@ function QuestionFormModal({ editingQ, qForm, setQForm, onClose, onSubmit, loadi
             {loading ? "Saving…" : editingQ ? "Save Changes" : "Add Question"}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function ImagePreviewModal({ src, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="relative max-w-4xl w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onClose}
+          className="absolute -top-10 right-0 text-white/90 hover:text-white text-sm font-semibold"
+        >
+          Close
+        </button>
+        <img src={src} alt="Preview" className="max-h-[85vh] w-auto max-w-full rounded-2xl border border-white/20" />
       </div>
     </div>
   )
