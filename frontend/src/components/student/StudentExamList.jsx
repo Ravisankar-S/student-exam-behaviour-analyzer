@@ -1,4 +1,4 @@
-import { BookOpen, Clock, Filter, PlayCircle, RefreshCcw, Search, UserRound } from "lucide-react"
+import { BookOpen, Clock, Filter, PlayCircle, RefreshCcw, Search, UserRound, X } from "lucide-react"
 
 export default function StudentExamList({
   exams = [],
@@ -8,6 +8,13 @@ export default function StudentExamList({
   subjectFilter,
   onSubjectFilterChange,
   subjectOptions = [],
+  departmentFilter,
+  onDepartmentFilterChange,
+  departmentOptions = [],
+  teacherFilter,
+  onTeacherFilterChange,
+  teacherOptions = [],
+  onClearFilters,
   onRefresh,
   onTakeExam,
 }) {
@@ -24,8 +31,8 @@ export default function StudentExamList({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="md:col-span-2 flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#ff4b2b]/30 focus-within:border-[#ff4b2b]">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+          <label className="xl:col-span-2 flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#ff4b2b]/30 focus-within:border-[#ff4b2b]">
             <Search size={16} className="text-gray-400" />
             <input
               value={searchQuery}
@@ -48,6 +55,41 @@ export default function StudentExamList({
               ))}
             </select>
           </label>
+
+          <label className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#ff4b2b]/30 focus-within:border-[#ff4b2b]">
+            <Filter size={16} className="text-gray-400" />
+            <select
+              value={departmentFilter}
+              onChange={(event) => onDepartmentFilterChange(event.target.value)}
+              className="w-full text-sm text-[#1a1a2e] bg-transparent outline-none"
+            >
+              <option value="">All Departments</option>
+              {departmentOptions.map((department) => (
+                <option key={department} value={department}>{department}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2 rounded-xl border border-gray-200 px-3 py-2.5 focus-within:ring-2 focus-within:ring-[#ff4b2b]/30 focus-within:border-[#ff4b2b]">
+            <UserRound size={16} className="text-gray-400" />
+            <select
+              value={teacherFilter}
+              onChange={(event) => onTeacherFilterChange(event.target.value)}
+              className="w-full text-sm text-[#1a1a2e] bg-transparent outline-none"
+            >
+              <option value="">All Teachers</option>
+              {teacherOptions.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>{teacher.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            onClick={onClearFilters}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition"
+          >
+            <X size={14} /> Clear
+          </button>
         </div>
       </div>
 

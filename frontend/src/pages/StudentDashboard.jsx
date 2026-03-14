@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "../context/AuthContext"
 import { useNavigate } from "react-router-dom"
 import { BookOpen, ChevronDown, LayoutDashboard, LogOut, Menu, Shield, Trash2, User, X } from "lucide-react"
-import { changePassword, deleteProfilePicture, getStudentProfile, updateStudentProfile, uploadProfilePicture } from "../api/auth"
+import { changePassword, deleteProfilePicture, getStudentProfile, getTeachersDirectory, updateStudentProfile, uploadProfilePicture } from "../api/auth"
 import { getPublicAssessmentQuestions, getPublishedAssessments, submitStudentAttempt, updateProfile } from "../api/assessments"
 import ChangePasswordModal from "../components/ChangePasswordModal"
 import Avatar from "../components/dashboard/DashboardAvatar"
@@ -13,6 +13,7 @@ import StudentExamList from "../components/student/StudentExamList"
 import ExamInstructionsModal from "../components/student/ExamInstructionsModal"
 import StudentExamRunner from "../components/student/StudentExamRunner"
 import StudentExamResult from "../components/student/StudentExamResult"
+import ExamSectionExitModal from "../components/student/ExamSectionExitModal"
 
 export default function StudentDashboard() {
   const { user, token, logout, setUser } = useAuth()
@@ -44,6 +45,11 @@ export default function StudentDashboard() {
   const [loadingPublishedExams, setLoadingPublishedExams] = useState(false)
   const [examSearchQuery, setExamSearchQuery] = useState("")
   const [examSubjectFilter, setExamSubjectFilter] = useState("")
+  const [examDepartmentFilter, setExamDepartmentFilter] = useState("")
+  const [examTeacherFilter, setExamTeacherFilter] = useState("")
+  const [hasAutoPrefilledDepartment, setHasAutoPrefilledDepartment] = useState(false)
+  const [teachersDirectory, setTeachersDirectory] = useState([])
+  const [loadingTeachersDirectory, setLoadingTeachersDirectory] = useState(false)
   const [selectedExam, setSelectedExam] = useState(null)
   const [examQuestions, setExamQuestions] = useState([])
   const [examInstructionOpen, setExamInstructionOpen] = useState(false)
@@ -51,6 +57,8 @@ export default function StudentDashboard() {
   const [startingExam, setStartingExam] = useState(false)
   const [attemptSubmitting, setAttemptSubmitting] = useState(false)
   const [examResult, setExamResult] = useState(null)
+  const [examExitConfirmOpen, setExamExitConfirmOpen] = useState(false)
+  const [examExitTarget, setExamExitTarget] = useState(null)
   const [imageModalSrc, setImageModalSrc] = useState(null)
   const [toast, setToast] = useState(null)
 
@@ -68,14 +76,30 @@ export default function StudentDashboard() {
     return unique
   }, [publishedExams])
 
+  const examDepartmentOptions = useMemo(() => {
+    const fromExams = (publishedExams || []).map((exam) => exam.teacher_department).filter(Boolean)
+    const unique = [...new Set(fromExams)]
+    if (studentProfileForm.department && !unique.includes(studentProfileForm.department)) {
+      unique.push(studentProfileForm.department)
+    }
+    unique.sort((a, b) => a.localeCompare(b))
+    return unique
+  }, [publishedExams, studentProfileForm.department])
+
   const filteredPublishedExams = useMemo(() => {
     const query = examSearchQuery.trim().toLowerCase()
     return (publishedExams || []).filter((exam) => {
-      const matchesQuery = !query || exam.title?.toLowerCase().includes(query) || exam.subject?.toLowerCase().includes(query)
+      const matchesQuery = !query ||
+        exam.title?.toLowerCase().includes(query) ||
+        exam.subject?.toLowerCase().includes(query) ||
+        exam.teacher_name?.toLowerCase().includes(query) ||
+        exam.teacher_department?.toLowerCase().includes(query)
       const matchesSubject = !examSubjectFilter || exam.subject === examSubjectFilter
-      return matchesQuery && matchesSubject
+      const matchesDepartment = !examDepartmentFilter || exam.teacher_department === examDepartmentFilter
+      const matchesTeacher = !examTeacherFilter || exam.teacher_id === examTeacherFilter
+      return matchesQuery && matchesSubject && matchesDepartment && matchesTeacher
     })
-  }, [publishedExams, examSearchQuery, examSubjectFilter])
+  }, [publishedExams, examSearchQuery, examSubjectFilter, examDepartmentFilter, examTeacherFilter])
 
   function flash(message, type = "success") {
     setToast({ message, type })
@@ -92,15 +116,18 @@ export default function StudentDashboard() {
   }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!studentProfileForm.department || examSubjectFilter || examSubjectOptions.length === 0) return
-    if (examSubjectOptions.includes(studentProfileForm.department)) {
-      setExamSubjectFilter(studentProfileForm.department)
+    if (hasAutoPrefilledDepartment) return
+    if (!studentProfileForm.department || examDepartmentFilter || examDepartmentOptions.length === 0) return
+    if (examDepartmentOptions.includes(studentProfileForm.department)) {
+      setExamDepartmentFilter(studentProfileForm.department)
+      setHasAutoPrefilledDepartment(true)
     }
-  }, [studentProfileForm.department, examSubjectFilter, examSubjectOptions])
+  }, [studentProfileForm.department, examDepartmentFilter, examDepartmentOptions, hasAutoPrefilledDepartment])
 
   useEffect(() => {
     if (!token || activeTab !== "exams" || examStage !== "list") return
     loadPublishedExams()
+    if (!teachersDirectory.length && !loadingTeachersDirectory) loadTeachersForFilter()
   }, [token, activeTab, examStage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -202,6 +229,50 @@ export default function StudentDashboard() {
     } finally {
       setLoadingPublishedExams(false)
     }
+  }
+
+  async function loadTeachersForFilter() {
+    setLoadingTeachersDirectory(true)
+    try {
+      const res = await getTeachersDirectory(token)
+      setTeachersDirectory(res.data || [])
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load teachers", "error")
+    } finally {
+      setLoadingTeachersDirectory(false)
+    }
+  }
+
+  function clearExamFilters() {
+    setExamSearchQuery("")
+    setExamSubjectFilter("")
+    setExamDepartmentFilter("")
+    setExamTeacherFilter("")
+  }
+
+  function askExamExit(target) {
+    setExamExitTarget(target)
+    setExamExitConfirmOpen(true)
+  }
+
+  function closeExamExitModal() {
+    setExamExitConfirmOpen(false)
+    setExamExitTarget(null)
+  }
+
+  function confirmExamExit() {
+    if (!examExitTarget) return
+
+    if (examExitTarget.type === "tab") {
+      setActiveTab(examExitTarget.key)
+      setSidebarOpen(false)
+      setProfileMenuOpen(false)
+    } else if (examExitTarget.type === "logout") {
+      logout()
+      navigate("/")
+    }
+
+    closeExamExitModal()
   }
 
   function openExamInstructions(exam) {
@@ -307,6 +378,10 @@ export default function StudentDashboard() {
       flash("Complete the exam first. Navigation is locked.", "error")
       return
     }
+    if (activeTab === "exams") {
+      askExamExit({ type: "logout" })
+      return
+    }
     logout()
     navigate("/")
   }
@@ -314,6 +389,10 @@ export default function StudentDashboard() {
   function goTab(key) {
     if (examInProgress && key !== "exams") {
       flash("Complete the exam first. Navigation is locked.", "error")
+      return
+    }
+    if (activeTab === "exams" && key !== "exams") {
+      askExamExit({ type: "tab", key })
       return
     }
     setActiveTab(key)
@@ -451,6 +530,13 @@ export default function StudentDashboard() {
                   subjectFilter={examSubjectFilter}
                   onSubjectFilterChange={setExamSubjectFilter}
                   subjectOptions={examSubjectOptions}
+                  departmentFilter={examDepartmentFilter}
+                  onDepartmentFilterChange={setExamDepartmentFilter}
+                  departmentOptions={examDepartmentOptions}
+                  teacherFilter={examTeacherFilter}
+                  onTeacherFilterChange={setExamTeacherFilter}
+                  teacherOptions={teachersDirectory}
+                  onClearFilters={clearExamFilters}
                   onRefresh={loadPublishedExams}
                   onTakeExam={openExamInstructions}
                 />
@@ -638,6 +724,12 @@ export default function StudentDashboard() {
         onClose={() => !startingExam && setExamInstructionOpen(false)}
         onStart={startSelectedExam}
         loading={startingExam}
+      />
+
+      <ExamSectionExitModal
+        open={examExitConfirmOpen}
+        onCancel={closeExamExitModal}
+        onConfirm={confirmExamExit}
       />
 
       {toast && (

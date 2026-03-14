@@ -39,6 +39,13 @@ export const getTeachers = (token, q = "") =>
     },
   })
 
+export const getTeachersDirectory = (token) =>
+  API.get("/auth/teachers-directory", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
 export const createTeacher = (token, data) =>
   API.post("/auth/teachers", data, {
     headers: {

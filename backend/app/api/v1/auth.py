@@ -225,6 +225,22 @@ def list_teachers(
     return [_serialize_teacher_user(teacher) for teacher in teachers]
 
 
+@router.get("/teachers-directory")
+def list_teachers_directory(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    teachers = db.query(User).filter(User.role == RoleEnum.teacher).order_by(User.name.asc()).all()
+    return [
+        {
+            "id": str(teacher.id),
+            "name": teacher.name,
+            "department": teacher.teacher_profile.department if teacher.teacher_profile else None,
+        }
+        for teacher in teachers
+    ]
+
+
 @router.post("/teachers", status_code=201)
 def create_teacher_account(
     data: AdminCreateTeacherRequest,

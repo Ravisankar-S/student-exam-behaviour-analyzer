@@ -44,7 +44,9 @@ def _serialize_published_assessment(a: Assessment, db: Session):
         "duration_minutes": a.duration_minutes,
         "question_count": q_count,
         "created_by": str(a.created_by),
+        "teacher_id": str(a.created_by),
         "teacher_name": a.creator.name if a.creator else None,
+        "teacher_department": a.creator.teacher_profile.department if a.creator and a.creator.teacher_profile else None,
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }
 
