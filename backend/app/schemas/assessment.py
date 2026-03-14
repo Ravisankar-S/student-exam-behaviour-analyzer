@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 
@@ -30,3 +30,15 @@ class AssessmentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class StudentAttemptResponseItem(BaseModel):
+    question_id: str
+    selected_option_id: Optional[str] = None
+    skipped: bool = False
+
+
+class StudentAttemptSubmitRequest(BaseModel):
+    responses: List[StudentAttemptResponseItem]
+    started_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None

@@ -1,14 +1,18 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useAuth } from "../context/AuthContext"
 import { useNavigate } from "react-router-dom"
-import { ChevronDown, LayoutDashboard, LogOut, Menu, Shield, Trash2, User, X } from "lucide-react"
+import { BookOpen, ChevronDown, LayoutDashboard, LogOut, Menu, Shield, Trash2, User, X } from "lucide-react"
 import { changePassword, deleteProfilePicture, getStudentProfile, updateStudentProfile, uploadProfilePicture } from "../api/auth"
-import { updateProfile } from "../api/assessments"
+import { getPublicAssessmentQuestions, getPublishedAssessments, submitStudentAttempt, updateProfile } from "../api/assessments"
 import ChangePasswordModal from "../components/ChangePasswordModal"
 import Avatar from "../components/dashboard/DashboardAvatar"
 import ImagePreviewModal from "../components/dashboard/ImagePreviewModal"
 import ProfileIdCard from "../components/dashboard/ProfileIdCard"
 import ProfileDetailsSection from "../components/dashboard/ProfileDetailsSection"
+import StudentExamList from "../components/student/StudentExamList"
+import ExamInstructionsModal from "../components/student/ExamInstructionsModal"
+import StudentExamRunner from "../components/student/StudentExamRunner"
+import StudentExamResult from "../components/student/StudentExamResult"
 
 export default function StudentDashboard() {
   const { user, token, logout, setUser } = useAuth()
@@ -36,13 +40,42 @@ export default function StudentDashboard() {
   })
   const [studentProfileLoading, setStudentProfileLoading] = useState(false)
   const [studentProfileSaving, setStudentProfileSaving] = useState(false)
+  const [publishedExams, setPublishedExams] = useState([])
+  const [loadingPublishedExams, setLoadingPublishedExams] = useState(false)
+  const [examSearchQuery, setExamSearchQuery] = useState("")
+  const [examSubjectFilter, setExamSubjectFilter] = useState("")
+  const [selectedExam, setSelectedExam] = useState(null)
+  const [examQuestions, setExamQuestions] = useState([])
+  const [examInstructionOpen, setExamInstructionOpen] = useState(false)
+  const [examStage, setExamStage] = useState("list")
+  const [startingExam, setStartingExam] = useState(false)
+  const [attemptSubmitting, setAttemptSubmitting] = useState(false)
+  const [examResult, setExamResult] = useState(null)
   const [imageModalSrc, setImageModalSrc] = useState(null)
   const [toast, setToast] = useState(null)
+
+  const examInProgress = activeTab === "exams" && examStage === "attempt"
 
   const navItems = [
     { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
     { key: "profile", label: "Profile", Icon: User },
+    { key: "exams", label: "Exams", Icon: BookOpen },
   ]
+
+  const examSubjectOptions = useMemo(() => {
+    const unique = [...new Set((publishedExams || []).map((exam) => exam.subject).filter(Boolean))]
+    unique.sort((a, b) => a.localeCompare(b))
+    return unique
+  }, [publishedExams])
+
+  const filteredPublishedExams = useMemo(() => {
+    const query = examSearchQuery.trim().toLowerCase()
+    return (publishedExams || []).filter((exam) => {
+      const matchesQuery = !query || exam.title?.toLowerCase().includes(query) || exam.subject?.toLowerCase().includes(query)
+      const matchesSubject = !examSubjectFilter || exam.subject === examSubjectFilter
+      return matchesQuery && matchesSubject
+    })
+  }, [publishedExams, examSearchQuery, examSubjectFilter])
 
   function flash(message, type = "success") {
     setToast({ message, type })
@@ -57,6 +90,40 @@ export default function StudentDashboard() {
     if (!token) return
     loadStudentProfile()
   }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!studentProfileForm.department || examSubjectFilter || examSubjectOptions.length === 0) return
+    if (examSubjectOptions.includes(studentProfileForm.department)) {
+      setExamSubjectFilter(studentProfileForm.department)
+    }
+  }, [studentProfileForm.department, examSubjectFilter, examSubjectOptions])
+
+  useEffect(() => {
+    if (!token || activeTab !== "exams" || examStage !== "list") return
+    loadPublishedExams()
+  }, [token, activeTab, examStage]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!examInProgress) return
+
+    const onBeforeUnload = (event) => {
+      event.preventDefault()
+      event.returnValue = ""
+    }
+
+    const onPopState = () => {
+      window.history.pushState(null, "", window.location.href)
+    }
+
+    window.history.pushState(null, "", window.location.href)
+    window.addEventListener("beforeunload", onBeforeUnload)
+    window.addEventListener("popstate", onPopState)
+
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload)
+      window.removeEventListener("popstate", onPopState)
+    }
+  }, [examInProgress])
 
   async function handlePasswordSave(data) {
     setPasswordLoading(true)
@@ -125,6 +192,72 @@ export default function StudentDashboard() {
     }
   }
 
+  async function loadPublishedExams() {
+    setLoadingPublishedExams(true)
+    try {
+      const res = await getPublishedAssessments(token)
+      setPublishedExams(res.data || [])
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load published exams", "error")
+    } finally {
+      setLoadingPublishedExams(false)
+    }
+  }
+
+  function openExamInstructions(exam) {
+    if (examInProgress) return
+    setSelectedExam(exam)
+    setExamInstructionOpen(true)
+  }
+
+  async function startSelectedExam() {
+    if (!selectedExam) return
+    setStartingExam(true)
+    try {
+      const res = await getPublicAssessmentQuestions(token, selectedExam.id)
+      const questions = res.data || []
+      if (questions.length === 0) {
+        flash("No questions available for this exam", "error")
+        return
+      }
+
+      setExamQuestions(questions)
+      setExamInstructionOpen(false)
+      setExamStage("attempt")
+      setSidebarCollapsed(true)
+      setProfileMenuOpen(false)
+      setSidebarOpen(false)
+      flash("Exam started. Navigation is locked until completion.")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to start exam", "error")
+    } finally {
+      setStartingExam(false)
+    }
+  }
+
+  async function submitAttempt(payload) {
+    if (!selectedExam) return
+    setAttemptSubmitting(true)
+    try {
+      const res = await submitStudentAttempt(token, selectedExam.id, payload)
+      setExamResult(res.data || null)
+      setExamStage("result")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to submit attempt", "error")
+    } finally {
+      setAttemptSubmitting(false)
+    }
+  }
+
+  function resetExamFlow() {
+    setExamStage("list")
+    setSelectedExam(null)
+    setExamQuestions([])
+    setExamResult(null)
+    setExamInstructionOpen(false)
+    loadPublishedExams()
+  }
+
   async function handleProfileSave() {
     setProfileSaving(true)
     try {
@@ -170,12 +303,21 @@ export default function StudentDashboard() {
   }
 
   function handleLogout() {
+    if (examInProgress) {
+      flash("Complete the exam first. Navigation is locked.", "error")
+      return
+    }
     logout()
     navigate("/")
   }
 
   function goTab(key) {
+    if (examInProgress && key !== "exams") {
+      flash("Complete the exam first. Navigation is locked.", "error")
+      return
+    }
     setActiveTab(key)
+    if (key === "exams") setSidebarCollapsed(true)
     setSidebarOpen(false)
     setProfileMenuOpen(false)
   }
@@ -186,11 +328,11 @@ export default function StudentDashboard() {
 
       <aside className={`fixed top-0 left-0 h-full w-64 bg-white/95 backdrop-blur border-r border-gray-200 shadow-xl z-50 flex flex-col transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:shadow-none lg:z-auto lg:transition-all lg:duration-300 ${sidebarCollapsed ? "lg:w-20" : "lg:w-64"}`}>
         <div className="flex items-center gap-2.5 px-4 h-16 border-b border-gray-100 shrink-0">
-          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg" onClick={() => setSidebarCollapsed((v) => !v)}>
+          <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-50" onClick={() => setSidebarCollapsed((v) => !v)} disabled={examInProgress}>
             <Menu size={18} />
           </button>
           {!sidebarCollapsed && <span className="font-extrabold text-lg text-[#1a1a2e] tracking-tight">Argus.ai</span>}
-          <button className="ml-auto p-1 text-gray-400 hover:text-gray-700 lg:hidden" onClick={() => setSidebarOpen(false)}>
+          <button className="ml-auto p-1 text-gray-400 hover:text-gray-700 lg:hidden" onClick={() => setSidebarOpen(false)} disabled={examInProgress}>
             <X size={18} />
           </button>
         </div>
@@ -201,7 +343,8 @@ export default function StudentDashboard() {
               key={key}
               onClick={() => goTab(key)}
               title={sidebarCollapsed ? label : undefined}
-              className={`w-full flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-4 py-2.5 rounded-xl font-semibold text-sm transition-all ${activeTab === key ? "bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white shadow-sm" : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"}`}
+              disabled={examInProgress && key !== "exams"}
+              className={`w-full flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-4 py-2.5 rounded-xl font-semibold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed ${activeTab === key ? "bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white shadow-sm" : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"}`}
             >
               <Icon size={17} /> {!sidebarCollapsed && label}
             </button>
@@ -218,7 +361,7 @@ export default function StudentDashboard() {
               </div>
             )}
           </div>
-          <button onClick={handleLogout} className={`w-full flex items-center ${sidebarCollapsed ? "justify-center" : "gap-2.5"} px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-500 hover:bg-red-50 hover:text-red-500 transition-colors`}>
+          <button onClick={handleLogout} disabled={examInProgress} className={`w-full flex items-center ${sidebarCollapsed ? "justify-center" : "gap-2.5"} px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-500 hover:bg-red-50 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}>
             <LogOut size={16} /> {!sidebarCollapsed && "Logout"}
           </button>
         </div>
@@ -226,7 +369,7 @@ export default function StudentDashboard() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="bg-white border-b border-gray-100 h-16 flex items-center px-4 lg:px-8 gap-4 sticky top-0 z-30 shadow-sm">
-          <button className="p-2 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100 lg:hidden" onClick={() => setSidebarOpen(true)}>
+          <button className="p-2 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100 lg:hidden disabled:opacity-50" onClick={() => setSidebarOpen(true)} disabled={examInProgress}>
             <Menu size={20} />
           </button>
           <h1 className="hidden lg:block text-base font-bold text-[#1a1a2e]">
@@ -235,7 +378,7 @@ export default function StudentDashboard() {
 
           <div className="ml-auto flex items-center gap-2">
             <div className="relative" onMouseLeave={() => setProfileMenuOpen(false)}>
-              <button onClick={() => setProfileMenuOpen((v) => !v)} onMouseEnter={() => setProfileMenuOpen(true)} className="flex items-center gap-2 hover:bg-gray-50 rounded-xl px-3 py-1.5 transition-colors border border-transparent hover:border-gray-100">
+              <button onClick={() => !examInProgress && setProfileMenuOpen((v) => !v)} onMouseEnter={() => !examInProgress && setProfileMenuOpen(true)} disabled={examInProgress} className="flex items-center gap-2 hover:bg-gray-50 rounded-xl px-3 py-1.5 transition-colors border border-transparent hover:border-gray-100 disabled:opacity-60 disabled:cursor-not-allowed">
                 <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} fallback="S" />
                 <div className="hidden sm:block text-left">
                   <p className="text-sm font-semibold text-[#1a1a2e] leading-tight">{user?.name || "Student"}</p>
@@ -275,7 +418,62 @@ export default function StudentDashboard() {
                 <StatCard icon="📧" value={user?.email || "—"} label="Email" />
                 <StatCard icon="🎓" value="Student" label="Role" />
               </div>
+
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-gray-400 font-semibold">Exams</p>
+                  <h3 className="text-lg font-bold text-[#1a1a2e]">Ready to attend a test?</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">Browse published exams and begin when prepared.</p>
+                </div>
+                <button
+                  onClick={() => goTab("exams")}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-sm font-semibold hover:opacity-90 transition"
+                >
+                  To attend test click here
+                </button>
+              </div>
             </>
+          )}
+
+          {activeTab === "exams" && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-extrabold text-[#1a1a2e]">Exams</h2>
+                <p className="text-gray-500 text-sm mt-0.5">Select a published exam, read instructions, and complete all questions.</p>
+              </div>
+
+              {examStage === "list" && (
+                <StudentExamList
+                  exams={filteredPublishedExams}
+                  loading={loadingPublishedExams}
+                  searchQuery={examSearchQuery}
+                  onSearchQueryChange={setExamSearchQuery}
+                  subjectFilter={examSubjectFilter}
+                  onSubjectFilterChange={setExamSubjectFilter}
+                  subjectOptions={examSubjectOptions}
+                  onRefresh={loadPublishedExams}
+                  onTakeExam={openExamInstructions}
+                />
+              )}
+
+              {examStage === "attempt" && selectedExam && (
+                <StudentExamRunner
+                  exam={selectedExam}
+                  questions={examQuestions}
+                  onSubmitAttempt={submitAttempt}
+                  submitting={attemptSubmitting}
+                  onFlash={flash}
+                />
+              )}
+
+              {examStage === "result" && (
+                <StudentExamResult
+                  examTitle={selectedExam?.title}
+                  result={examResult}
+                  onBackToExams={resetExamFlow}
+                />
+              )}
+            </div>
           )}
 
           {activeTab === "profile" && (
@@ -433,6 +631,14 @@ export default function StudentDashboard() {
       />
 
       {imageModalSrc && <ImagePreviewModal src={imageModalSrc} onClose={() => setImageModalSrc(null)} />}
+
+      <ExamInstructionsModal
+        exam={selectedExam}
+        open={examInstructionOpen}
+        onClose={() => !startingExam && setExamInstructionOpen(false)}
+        onStart={startSelectedExam}
+        loading={startingExam}
+      />
 
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 px-5 py-3 rounded-xl shadow-lg font-semibold text-sm text-white ${toast.type === "error" ? "bg-red-500" : "bg-[#1a1a2e]"}`}>

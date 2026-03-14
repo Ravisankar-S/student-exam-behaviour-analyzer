@@ -26,6 +26,20 @@ export const reorderAssessments = (token, ids) =>
 export const getAssessmentAttempts = (token, id) =>
   API.get(`/assessments/${id}/attempts`, authHeader(token))
 
+export const getPublishedAssessments = (token, params = {}) => {
+  const searchParams = new URLSearchParams()
+  if (params.q) searchParams.set("q", params.q)
+  if (params.subject) searchParams.set("subject", params.subject)
+  const qs = searchParams.toString()
+  return API.get(`/assessments/published${qs ? `?${qs}` : ""}`, authHeader(token))
+}
+
+export const getPublicAssessmentQuestions = (token, assessmentId) =>
+  API.get(`/assessments/${assessmentId}/public-questions`, authHeader(token))
+
+export const submitStudentAttempt = (token, assessmentId, data) =>
+  API.post(`/assessments/${assessmentId}/submit-attempt`, data, authHeader(token))
+
 // ── Questions ────────────────────────────────
 export const getQuestions = (token, assessmentId) =>
   API.get(`/assessments/${assessmentId}/questions`, authHeader(token))
