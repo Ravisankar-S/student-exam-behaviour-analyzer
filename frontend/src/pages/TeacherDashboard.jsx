@@ -11,7 +11,7 @@ import { CSS } from "@dnd-kit/utilities"
 import {
   LayoutDashboard, BookOpen, User, LogOut, Menu, X, Plus,
   Edit2, Trash2, Eye, EyeOff, Clock, Users, BookMarked,
-  ChevronRight, AlertCircle, GripVertical, HelpCircle, ListFilter, RotateCcw, ChevronDown, BarChart3,
+  ChevronRight, AlertCircle, GripVertical, HelpCircle, ListFilter, RotateCcw, ChevronDown, BarChart3, Shield,
 } from "lucide-react"
 import {
   getMyAssessments, createAssessment, updateAssessment,
@@ -43,6 +43,10 @@ import {
   ScatterChart,
   Scatter,
 } from "recharts"
+import Avatar from "../components/dashboard/DashboardAvatar"
+import ImagePreviewModal from "../components/dashboard/ImagePreviewModal"
+import ProfileIdCard from "../components/dashboard/ProfileIdCard"
+import ProfileDetailsSection from "../components/dashboard/ProfileDetailsSection"
 
 // ── Subject colour palette ───────────────────
 const SUBJECT_COLORS = [
@@ -78,12 +82,6 @@ function durationMinutesFromAttempt(attempt, fallbackDuration = 60) {
     if (ms > 0) return ms / 60000
   }
   return fallbackDuration * 0.72
-}
-
-function toAbsoluteImageUrl(path) {
-  if (!path) return null
-  if (path.startsWith("http://") || path.startsWith("https://")) return path
-  return `http://127.0.0.1:8000${path}`
 }
 
 function enrichAttemptDummy(attempt, fallbackDuration = 60) {
@@ -644,7 +642,7 @@ export default function TeacherDashboard() {
         </nav>
         <div className="mt-auto px-3 pb-4 border-t border-gray-100 pt-3 shrink-0 bg-gradient-to-b from-white to-gray-50/70 lg:mb-0">
           <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-3 py-2 mb-1`}>
-            <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
+            <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} fallback="T" />
             {!sidebarCollapsed && (
               <div className="min-w-0">
                 <p className="text-sm font-bold text-[#1a1a2e] truncate">{user?.name}</p>
@@ -681,7 +679,7 @@ export default function TeacherDashboard() {
                 onMouseEnter={() => setProfileMenuOpen(true)}
                 className="flex items-center gap-2 hover:bg-gray-50 rounded-xl px-3 py-1.5 transition-colors border border-transparent hover:border-gray-100"
               >
-                <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
+                <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} fallback="T" />
                 <div className="hidden sm:block text-left">
                   <p className="text-sm font-semibold text-[#1a1a2e] leading-tight">{user?.name}</p>
                   <p className="text-[10px] uppercase tracking-wider text-[#ff4b2b] font-semibold">Teacher</p>
@@ -704,11 +702,7 @@ export default function TeacherDashboard() {
                       }}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 rounded-lg"
                     >
-                      <svg viewBox="0 0 24 24" fill="none" className="w-[15px] h-[15px]" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <rect x="3" y="11" width="18" height="10" rx="2" />
-                        <path d="M7 11V8a5 5 0 0 1 10 0v3" />
-                      </svg>
-                      Change Password
+                      <Shield size={15} /> Change Password
                     </button>
                   )}
                   <button
@@ -1195,7 +1189,7 @@ export default function TeacherDashboard() {
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 items-start">
                 <div className="xl:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
                   <div className="flex items-center gap-4">
-                    <Avatar name={user?.name} imagePath={user?.profile_picture_path} large onClick={setImageModalSrc} />
+                    <Avatar name={user?.name} imagePath={user?.profile_picture_path} large onClick={setImageModalSrc} fallback="T" />
                     <div>
                       <p className="font-bold text-[#1a1a2e] text-lg">{user?.name}</p>
                       <p className="text-xs font-semibold text-[#ff4b2b] uppercase tracking-wider">Teacher</p>
@@ -1244,99 +1238,75 @@ export default function TeacherDashboard() {
                   </button>
                 </div>
 
-                <div className="bg-gradient-to-br from-[#1a1a2e] to-[#2a2a46] rounded-2xl p-6 text-white shadow-sm">
-                  <p className="text-xs uppercase tracking-wider text-white/70 font-semibold">Teacher ID Card</p>
-                  <div className="mt-4 flex items-center gap-3">
-                    <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
-                    <div>
-                      <p className="font-bold text-lg leading-tight">{user?.name}</p>
-                      <p className="text-sm text-white/70">{teacherProfileForm.college_email || "No college email set"}</p>
-                    </div>
-                  </div>
-                  <div className="mt-5 space-y-2 text-sm">
-                    <div className="flex justify-between"><span className="text-white/70">Role</span><span className="font-semibold">Teacher</span></div>
-                    <div className="flex justify-between"><span className="text-white/70">Exams</span><span className="font-semibold">{totalExams}</span></div>
-                    {teacherProfileForm.employee_id && (
-                      <div className="flex justify-between"><span className="text-white/70">Employee ID</span><span className="font-semibold">{teacherProfileForm.employee_id}</span></div>
-                    )}
-                    {teacherProfileForm.department && (
-                      <div className="flex justify-between"><span className="text-white/70">Department</span><span className="font-semibold text-right">{teacherProfileForm.department}</span></div>
-                    )}
-                    {teacherProfileForm.designation && (
-                      <div className="flex justify-between"><span className="text-white/70">Designation</span><span className="font-semibold text-right">{teacherProfileForm.designation}</span></div>
-                    )}
-                    {teacherProfileForm.office_room && (
-                      <div className="flex justify-between"><span className="text-white/70">Office</span><span className="font-semibold text-right">{teacherProfileForm.office_room}</span></div>
-                    )}
-                    {teacherProfileForm.subjects && (
-                      <div>
-                        <p className="text-white/70">Subjects</p>
-                        <p className="font-semibold leading-snug">{teacherProfileForm.subjects}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <ProfileIdCard
+                  title="Teacher ID Card"
+                  name={user?.name}
+                  subtitle={teacherProfileForm.college_email || "No college email set"}
+                  roleLabel="Teacher"
+                  imagePath={user?.profile_picture_path}
+                  avatarFallback="T"
+                  onAvatarClick={setImageModalSrc}
+                  rows={[
+                    { label: "Exams", value: totalExams, alwaysShow: true },
+                    { label: "Employee ID", value: teacherProfileForm.employee_id },
+                    { label: "Department", value: teacherProfileForm.department },
+                    { label: "Designation", value: teacherProfileForm.designation },
+                    { label: "Office", value: teacherProfileForm.office_room },
+                    { label: "Subjects", value: teacherProfileForm.subjects, fullWidth: true },
+                  ]}
+                />
               </div>
 
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <h3 className="font-bold text-[#1a1a2e] text-base">Professional Details</h3>
-                    <p className="text-sm text-gray-500">Use these fields for teacher identity and subject mapping.</p>
-                  </div>
-                  {teacherProfileLoading && <span className="text-xs text-gray-400 font-semibold">Loading…</span>}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  <Field
-                    label="Employee ID"
-                    value={teacherProfileForm.employee_id}
-                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, employee_id: v }))}
-                    placeholder="EMP-1024"
-                  />
-                  <Field
-                    label="College Email"
-                    type="email"
-                    value={teacherProfileForm.college_email}
-                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, college_email: v }))}
-                    placeholder="teacher@college.edu"
-                  />
-                  <Field
-                    label="Department"
-                    value={teacherProfileForm.department}
-                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, department: v }))}
-                    placeholder="Computer Science"
-                  />
-                  <Field
-                    label="Designation"
-                    value={teacherProfileForm.designation}
-                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, designation: v }))}
-                    placeholder="Assistant Professor"
-                  />
-                  <div className="md:col-span-2">
-                    <Field
-                      label="Subjects"
-                      value={teacherProfileForm.subjects}
-                      onChange={(v) => setTeacherProfileForm((p) => ({ ...p, subjects: v }))}
-                      placeholder="DBMS, Data Structures, Operating Systems"
-                    />
-                  </div>
-                  <Field
-                    label="Office Room"
-                    value={teacherProfileForm.office_room}
-                    onChange={(v) => setTeacherProfileForm((p) => ({ ...p, office_room: v }))}
-                    placeholder="Block B · Room 214"
-                  />
-                </div>
-
-                <button
-                  onClick={handleTeacherProfileSave}
-                  disabled={teacherProfileSaving || teacherProfileLoading}
-                  className="w-full md:w-auto px-6 py-2.5 bg-[#1a1a2e] text-white font-semibold rounded-xl hover:bg-[#252542] transition disabled:opacity-60"
-                >
-                  {teacherProfileSaving ? "Saving…" : "Save Professional Details"}
-                </button>
-              </div>
+              <ProfileDetailsSection
+                title="Professional Details"
+                description="Use these fields for teacher identity and subject mapping."
+                loading={teacherProfileLoading}
+                fields={[
+                  {
+                    label: "Employee ID",
+                    value: teacherProfileForm.employee_id,
+                    onChange: (v) => setTeacherProfileForm((p) => ({ ...p, employee_id: v })),
+                    placeholder: "EMP-1024",
+                  },
+                  {
+                    label: "College Email",
+                    type: "email",
+                    value: teacherProfileForm.college_email,
+                    onChange: (v) => setTeacherProfileForm((p) => ({ ...p, college_email: v })),
+                    placeholder: "teacher@college.edu",
+                  },
+                  {
+                    label: "Department",
+                    value: teacherProfileForm.department,
+                    onChange: (v) => setTeacherProfileForm((p) => ({ ...p, department: v })),
+                    placeholder: "Computer Science",
+                  },
+                  {
+                    label: "Designation",
+                    value: teacherProfileForm.designation,
+                    onChange: (v) => setTeacherProfileForm((p) => ({ ...p, designation: v })),
+                    placeholder: "Assistant Professor",
+                  },
+                  {
+                    label: "Subjects",
+                    value: teacherProfileForm.subjects,
+                    onChange: (v) => setTeacherProfileForm((p) => ({ ...p, subjects: v })),
+                    placeholder: "DBMS, Data Structures, Operating Systems",
+                    wrapperClassName: "md:col-span-2",
+                  },
+                  {
+                    label: "Office Room",
+                    value: teacherProfileForm.office_room,
+                    onChange: (v) => setTeacherProfileForm((p) => ({ ...p, office_room: v })),
+                    placeholder: "Block B · Room 214",
+                  },
+                ]}
+                onSave={handleTeacherProfileSave}
+                saving={teacherProfileSaving}
+                disableSave={teacherProfileLoading}
+                saveLabel="Save Professional Details"
+                saveButtonClassName="w-full md:w-auto px-6 py-2.5 bg-[#1a1a2e] text-white font-semibold rounded-xl hover:bg-[#252542] transition disabled:opacity-60"
+              />
 
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-3">
                 <h3 className="font-bold text-[#1a1a2e] text-sm">Account Info</h3>
@@ -1520,33 +1490,6 @@ function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onQuestions, reorde
 // ─────────────────────────────────────────────
 // Shared helpers
 // ─────────────────────────────────────────────
-function Avatar({ name, imagePath, large = false, onClick }) {
-  const [imageFailed, setImageFailed] = useState(false)
-  const cls = large ? "w-16 h-16 text-2xl" : "w-9 h-9 text-sm"
-  const src = toAbsoluteImageUrl(imagePath)
-
-  useEffect(() => {
-    setImageFailed(false)
-  }, [imagePath])
-
-  if (src && !imageFailed) {
-    return (
-      <img
-        src={src}
-        alt={name || "Profile"}
-        onClick={() => onClick && onClick(src)}
-        onError={() => setImageFailed(true)}
-        className={`${cls} rounded-full object-cover shrink-0 ${onClick ? "cursor-zoom-in" : ""}`}
-      />
-    )
-  }
-
-  return (
-    <div className={`${cls} rounded-full bg-gradient-to-br from-[#ff4b2b] to-[#ff416c] flex items-center justify-center text-white font-bold shrink-0`}>
-      {name?.[0]?.toUpperCase() ?? "T"}
-    </div>
-  )
-}
 
 function StatCard({ icon, value, label, gradient, className = "" }) {
   return (
@@ -1658,18 +1601,4 @@ function Field({ label, value, onChange, placeholder, type = "text", required = 
   )
 }
 
-function ImagePreviewModal({ src, onClose }) {
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="relative max-w-4xl w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-        <button
-          onClick={onClose}
-          className="absolute -top-10 right-0 text-white/90 hover:text-white text-sm font-semibold"
-        >
-          Close
-        </button>
-        <img src={src} alt="Preview" className="max-h-[85vh] w-auto max-w-full rounded-2xl border border-white/20" />
-      </div>
-    </div>
-  )
-}
+

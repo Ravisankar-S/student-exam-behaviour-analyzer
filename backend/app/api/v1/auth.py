@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.schemas.auth import SignupRequest, LoginRequest, TokenResponse, ProfileUpdateRequest, ChangePasswordRequest, TestEmailRequest, AdminCreateTeacherRequest
 from app.schemas.teacher_profile import TeacherProfileUpdateRequest
+from app.schemas.student_profile import StudentProfileUpdateRequest
 from app.services.auth_service import register_user, authenticate_user, change_user_password, generate_initial_password
 from app.api.deps import get_db
 from app.api.deps import get_current_user
@@ -10,7 +11,6 @@ from app.models.user import User, RoleEnum
 from app.models.teacher_profile import TeacherProfile
 from app.models.student_profile import StudentProfile
 from app.models.admission_request import AdmissionRequest, AdmissionStatusEnum
-from app.models.faculty_request import FacultyRequest, FacultyRequestStatusEnum
 from app.core.security import hash_password
 from app.core.config import settings
 from app.utils.email import send_email, render_template
@@ -43,6 +43,12 @@ def require_teacher(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+def require_student(current_user: User = Depends(get_current_user)):
+    if current_user.role != RoleEnum.student:
+        raise HTTPException(status_code=403, detail="Student access required")
+    return current_user
+
+
 def require_admin(current_user: User = Depends(get_current_user)):
     if current_user.role != RoleEnum.admin:
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -58,6 +64,19 @@ def _serialize_teacher_profile(profile: TeacherProfile):
         "designation": profile.designation,
         "subjects": profile.subjects,
         "office_room": profile.office_room,
+        "year_of_joining": profile.year_of_joining,
+    }
+
+
+def _serialize_student_profile(profile: StudentProfile):
+    return {
+        "user_id": str(profile.user_id),
+        "reg_no": profile.reg_no,
+        "college_email": profile.college_email,
+        "department": profile.department,
+        "division": profile.division,
+        "class_roll_no": profile.class_roll_no,
+        "semester": profile.semester,
         "year_of_joining": profile.year_of_joining,
     }
 
@@ -282,20 +301,6 @@ def _serialize_admission_request(request: AdmissionRequest):
     }
 
 
-def _serialize_faculty_request(request: FacultyRequest):
-    return {
-        "id": str(request.id),
-        "full_name": request.full_name,
-        "email": request.email,
-        "department": request.department,
-        "year_of_joining": request.year_of_joining,
-        "status": request.status,
-        "reviewed_by": str(request.reviewed_by) if request.reviewed_by else None,
-        "reviewed_at": _to_utc_iso(request.reviewed_at),
-        "created_at": _to_utc_iso(request.created_at),
-    }
-
-
 @router.get("/admission-requests")
 def list_admission_requests(
     status: str = "pending",
@@ -364,125 +369,6 @@ def reject_admission_request(
     return _serialize_admission_request(req)
 
 
-@router.get("/faculty-requests")
-def list_faculty_requests(
-    status: str = "pending",
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
-):
-    query = db.query(FacultyRequest)
-    if status in {"pending", "approved", "rejected"}:
-        query = query.filter(FacultyRequest.status == status)
-
-    requests = query.order_by(FacultyRequest.created_at.desc()).all()
-    return [_serialize_faculty_request(req) for req in requests]
-
-
-@router.post("/faculty-requests", status_code=201)
-def create_faculty_request(
-    data: dict,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
-):
-    full_name = (data.get("full_name") or "").strip()
-    email = (data.get("email") or "").strip()
-    department = (data.get("department") or "").strip() or None
-    year_of_joining = data.get("year_of_joining")
-
-    if not full_name:
-        raise HTTPException(status_code=400, detail="Full name is required")
-    if not email:
-        raise HTTPException(status_code=400, detail="Email is required")
-
-    duplicate_user = db.query(User).filter(User.email == email).first()
-    if duplicate_user:
-        raise HTTPException(status_code=400, detail="Email already exists as user")
-
-    duplicate_request = db.query(FacultyRequest).filter(FacultyRequest.email == email).first()
-    if duplicate_request and duplicate_request.status == FacultyRequestStatusEnum.pending:
-        raise HTTPException(status_code=400, detail="Faculty request already pending for this email")
-
-    req = duplicate_request if duplicate_request else FacultyRequest(email=email)
-    req.full_name = full_name
-    req.department = department
-    req.year_of_joining = year_of_joining
-    req.status = FacultyRequestStatusEnum.pending
-    req.reviewed_by = None
-    req.reviewed_at = None
-
-    db.add(req)
-    db.commit()
-    db.refresh(req)
-    return _serialize_faculty_request(req)
-
-
-@router.post("/faculty-requests/{request_id}/approve")
-def approve_faculty_request(
-    request_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    req = db.query(FacultyRequest).filter(FacultyRequest.id == request_id).first()
-    if not req:
-        raise HTTPException(status_code=404, detail="Faculty request not found")
-
-    if req.status == FacultyRequestStatusEnum.approved:
-        return _serialize_faculty_request(req)
-
-    temp_password = generate_initial_password(req.full_name)
-    user = register_user(
-        db,
-        req.full_name,
-        req.email,
-        temp_password,
-        RoleEnum.teacher.value,
-        internal_create=True,
-    )
-
-    teacher_profile = db.query(TeacherProfile).filter(TeacherProfile.user_id == user.id).first()
-    if not teacher_profile:
-        teacher_profile = TeacherProfile(user_id=user.id)
-        db.add(teacher_profile)
-
-    teacher_profile.department = req.department
-    teacher_profile.year_of_joining = req.year_of_joining
-
-    req.status = FacultyRequestStatusEnum.approved
-    req.reviewed_by = current_user.id
-    req.reviewed_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(req)
-
-    subject = render_template(settings.FACULTY_APPROVED_SUBJECT, name=req.full_name)
-    body = render_template(
-        settings.FACULTY_APPROVED_BODY,
-        name=req.full_name,
-        email=req.email,
-        password=temp_password,
-    )
-    send_email(req.email, subject, body)
-
-    return _serialize_faculty_request(req)
-
-
-@router.post("/faculty-requests/{request_id}/reject")
-def reject_faculty_request(
-    request_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    req = db.query(FacultyRequest).filter(FacultyRequest.id == request_id).first()
-    if not req:
-        raise HTTPException(status_code=404, detail="Faculty request not found")
-
-    req.status = FacultyRequestStatusEnum.rejected
-    req.reviewed_by = current_user.id
-    req.reviewed_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(req)
-    return _serialize_faculty_request(req)
-
-
 @router.get("/teacher-profile")
 def get_teacher_profile(
     db: Session = Depends(get_db),
@@ -545,6 +431,70 @@ def update_teacher_profile(
     db.commit()
     db.refresh(profile)
     return _serialize_teacher_profile(profile)
+
+
+@router.get("/student-profile")
+def get_student_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_student),
+):
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = StudentProfile(user_id=current_user.id)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+    return _serialize_student_profile(profile)
+
+
+@router.patch("/student-profile")
+def update_student_profile(
+    data: StudentProfileUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_student),
+):
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == current_user.id).first()
+    if not profile:
+        profile = StudentProfile(user_id=current_user.id)
+        db.add(profile)
+        db.flush()
+
+    if data.reg_no is not None:
+        reg_no = data.reg_no.strip() or None
+        if reg_no:
+            duplicate_reg = db.query(StudentProfile).filter(
+                StudentProfile.reg_no == reg_no,
+                StudentProfile.user_id != current_user.id,
+            ).first()
+            if duplicate_reg:
+                raise HTTPException(status_code=400, detail="Registration number already in use")
+        profile.reg_no = reg_no
+
+    if data.college_email is not None:
+        college_email = data.college_email.strip() or None
+        if college_email:
+            duplicate_college_email = db.query(StudentProfile).filter(
+                StudentProfile.college_email == college_email,
+                StudentProfile.user_id != current_user.id,
+            ).first()
+            if duplicate_college_email:
+                raise HTTPException(status_code=400, detail="College email already in use")
+        profile.college_email = college_email
+
+    if data.department is not None:
+        profile.department = data.department.strip() or None
+    if data.division is not None:
+        profile.division = data.division.strip() or None
+    if data.class_roll_no is not None:
+        profile.class_roll_no = data.class_roll_no.strip() or None
+    if data.semester is not None:
+        profile.semester = data.semester
+    if data.year_of_joining is not None:
+        profile.year_of_joining = data.year_of_joining
+
+    db.commit()
+    db.refresh(profile)
+    return _serialize_student_profile(profile)
 
 
 @router.post("/signup")

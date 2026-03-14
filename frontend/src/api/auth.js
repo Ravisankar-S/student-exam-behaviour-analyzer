@@ -60,6 +60,20 @@ export const updateTeacherProfile = (token, data) =>
     },
   })
 
+export const getStudentProfile = (token) =>
+  API.get("/auth/student-profile", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
+export const updateStudentProfile = (token, data) =>
+  API.patch("/auth/student-profile", data, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
 export const uploadProfilePicture = (token, file) => {
   const formData = new FormData()
   formData.append("file", file)
@@ -99,30 +113,3 @@ export const rejectAdmissionRequest = (token, studentUserId) =>
     },
   })
 
-export const getFacultyRequests = (token, status = "pending") =>
-  API.get(`/auth/faculty-requests?status=${encodeURIComponent(status)}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-export const createFacultyRequest = (token, data) =>
-  API.post("/auth/faculty-requests", data, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-export const approveFacultyRequest = (token, requestId) =>
-  API.post(`/auth/faculty-requests/${requestId}/approve`, null, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-export const rejectFacultyRequest = (token, requestId) =>
-  API.post(`/auth/faculty-requests/${requestId}/reject`, null, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })

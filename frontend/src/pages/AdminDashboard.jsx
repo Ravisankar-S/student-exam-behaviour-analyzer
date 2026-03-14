@@ -28,12 +28,8 @@ import {
 } from "../api/auth"
 import { updateProfile } from "../api/assessments"
 import ChangePasswordModal from "../components/ChangePasswordModal"
-
-function toAbsoluteImageUrl(path) {
-  if (!path) return null
-  if (path.startsWith("http://") || path.startsWith("https://")) return path
-  return `http://127.0.0.1:8000${path}`
-}
+import Avatar from "../components/dashboard/DashboardAvatar"
+import ImagePreviewModal from "../components/dashboard/ImagePreviewModal"
 
 function formatTime(value) {
   if (!value) return "—"
@@ -337,7 +333,7 @@ export default function AdminDashboard() {
         </nav>
         <div className="mt-auto px-3 pb-4 border-t border-gray-100 pt-3 shrink-0 bg-gradient-to-b from-white to-gray-50/70 lg:mb-0">
           <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-3 py-2 mb-1`}>
-            <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
+            <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} fallback="A" />
             {!sidebarCollapsed && (
               <div className="min-w-0">
                 <p className="text-sm font-bold text-[#1a1a2e] truncate">{user?.name || "Admin"}</p>
@@ -402,7 +398,7 @@ export default function AdminDashboard() {
 
             <div className="relative" onMouseLeave={() => setProfileMenuOpen(false)}>
               <button onClick={() => setProfileMenuOpen((v) => !v)} onMouseEnter={() => setProfileMenuOpen(true)} className="flex items-center gap-2 hover:bg-gray-50 rounded-xl px-3 py-1.5 transition-colors border border-transparent hover:border-gray-100">
-                <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} />
+                <Avatar name={user?.name} imagePath={user?.profile_picture_path} onClick={setImageModalSrc} fallback="A" />
                 <div className="hidden sm:block text-left">
                   <p className="text-sm font-semibold text-[#1a1a2e] leading-tight">{user?.name || "Admin"}</p>
                   <p className="text-[10px] uppercase tracking-wider text-[#ff4b2b] font-semibold">Admin</p>
@@ -445,7 +441,7 @@ export default function AdminDashboard() {
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4 max-w-2xl">
               <h3 className="font-bold text-[#1a1a2e] text-lg">Profile</h3>
               <div className="flex items-center gap-4">
-                <Avatar name={user?.name} imagePath={user?.profile_picture_path} large onClick={setImageModalSrc} />
+                <Avatar name={user?.name} imagePath={user?.profile_picture_path} large onClick={setImageModalSrc} fallback="A" />
                 <div>
                   <p className="font-bold text-[#1a1a2e] text-lg">{user?.name || "Admin"}</p>
                   <p className="text-xs font-semibold text-[#ff4b2b] uppercase tracking-wider">Admin</p>
@@ -603,34 +599,6 @@ export default function AdminDashboard() {
   )
 }
 
-function Avatar({ name, imagePath, large = false, onClick }) {
-  const [imageFailed, setImageFailed] = useState(false)
-  const cls = large ? "w-16 h-16 text-2xl" : "w-9 h-9 text-sm"
-  const src = toAbsoluteImageUrl(imagePath)
-
-  useEffect(() => {
-    setImageFailed(false)
-  }, [imagePath])
-
-  if (src && !imageFailed) {
-    return (
-      <img
-        src={src}
-        alt={name || "Profile"}
-        onClick={() => onClick && onClick(src)}
-        onError={() => setImageFailed(true)}
-        className={`${cls} rounded-full object-cover shrink-0 ${onClick ? "cursor-zoom-in" : ""}`}
-      />
-    )
-  }
-
-  return (
-    <div className={`${cls} rounded-full bg-gradient-to-br from-[#ff4b2b] to-[#ff416c] flex items-center justify-center text-white font-bold shrink-0`}>
-      {name?.[0]?.toUpperCase() ?? "A"}
-    </div>
-  )
-}
-
 function StatCard({ icon, value, label }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center gap-4">
@@ -730,22 +698,6 @@ function Field({ label, value, onChange, placeholder, type = "text" }) {
         placeholder={placeholder}
         className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-[#1a1a2e] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#ff4b2b]/30 focus:border-[#ff4b2b] transition"
       />
-    </div>
-  )
-}
-
-function ImagePreviewModal({ src, onClose }) {
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="relative max-w-4xl w-full flex items-center justify-center" onClick={(event) => event.stopPropagation()}>
-        <button
-          onClick={onClose}
-          className="absolute -top-10 right-0 text-white/90 hover:text-white text-sm font-semibold"
-        >
-          Close
-        </button>
-        <img src={src} alt="Preview" className="max-h-[85vh] w-auto max-w-full rounded-2xl border border-white/20" />
-      </div>
     </div>
   )
 }
