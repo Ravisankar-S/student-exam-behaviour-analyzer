@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import Cubes from "../components/Cubes"
+import FullScreenLoader from "../components/FullScreenLoader"
 import "../styles/auth.css"
 import { signup, login, getMe } from "../api/auth"
 import { useAuth } from "../context/AuthContext"
@@ -103,12 +104,13 @@ export default function AuthPage() {
   const [suLoading, setSuLoading]     = useState(false)
   const [pendingModalOpen, setPendingModalOpen] = useState(false)
 
-  const { setToken } = useAuth()
+  const { completeLogin } = useAuth()
   const navigate = useNavigate()
   const pwStrength = scorePassword(suPassword)
   const isAdmin = role === "admin"
   const isStudent = role === "student"
   const canSignup = isStudent
+  const authSubmitting = siLoading || suLoading
 
   useEffect(() => {
     if (!canSignup) setIsSignup(false)
@@ -127,10 +129,9 @@ export default function AuthPage() {
     setSiLoading(true)
     try {
       const res = await login({ email: siEmail, password: siPassword })
-      const token = res.data.access_token
-      localStorage.setItem("token", token)
-      setToken(token)             // updates AuthContext globally
-      const meRes = await getMe(token)
+      const accessToken = res.data.access_token
+      const meRes = await getMe(accessToken)
+      completeLogin({ accessToken, user: meRes.data })
       const userRole = meRes.data.role
       navigate(`/dashboard/${userRole}`)
     } catch (err) {
@@ -274,10 +275,6 @@ export default function AuthPage() {
               autoComplete="current-password"
               error={siErrors.password}
             />
-
-            <div className="form-links">
-              <a href="#" className="forgot-link" tabIndex={0}>Forgot password?</a>
-            </div>
 
             {siApiError && (
               <span className="api-error" role="alert">{siApiError}</span>
@@ -454,6 +451,12 @@ export default function AuthPage() {
               OK
             </button>
           </div>
+        </div>
+      )}
+
+      {authSubmitting && (
+        <div className="fixed inset-0 z-[100]">
+          <FullScreenLoader label={siLoading ? "Signing you in…" : "Submitting your request…"} />
         </div>
       )}
       </div>

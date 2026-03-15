@@ -7,11 +7,12 @@ import StudentDashboard from './pages/StudentDashboard'
 import AdminDashboard from './pages/AdminDashboard'
 import ExamQuestionsPage from './pages/ExamQuestionsPage'
 import ClickSpark from './components/ClickSpark'
+import FullScreenLoader from './components/FullScreenLoader'
 
 /* Redirects to /login if not authenticated; also guards by role */
 function ProtectedRoute({ children, allowedRole }) {
   const { user, loading } = useAuth()
-  if (loading) return <div className="loading-screen">Loading…</div>
+  if (loading) return <FullScreenLoader label="Verifying your session…" />
   if (!user)   return <Navigate to="/" replace />
   if (allowedRole && user.role !== allowedRole) return <Navigate to="/" replace />
   return children
