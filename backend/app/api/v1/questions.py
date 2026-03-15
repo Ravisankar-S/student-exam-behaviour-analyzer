@@ -41,7 +41,10 @@ def create(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher),
 ):
-    result = create_question(db, assessment_id, data, current_user.id)
+    try:
+        result = create_question(db, assessment_id, data, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if result is None:
         raise HTTPException(status_code=404, detail="Assessment not found")
     return result
@@ -87,7 +90,10 @@ def update(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher),
 ):
-    result = update_question(db, assessment_id, question_id, data, current_user.id)
+    try:
+        result = update_question(db, assessment_id, question_id, data, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if result is None:
         raise HTTPException(status_code=404, detail="Question not found")
     return result

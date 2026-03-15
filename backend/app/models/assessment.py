@@ -14,7 +14,11 @@ class Assessment(Base):
     subject = Column(String, nullable=False)
     duration_minutes = Column(Integer, nullable=False, default=60)
     published = Column(Boolean, default=False)
+    closed_manually = Column(Boolean, default=False)
     order_index = Column(Integer, nullable=False, default=0)
+    available_from = Column(DateTime, nullable=True)
+    available_until = Column(DateTime, nullable=True)
+    manually_closed_at = Column(DateTime, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 

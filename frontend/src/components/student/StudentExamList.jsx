@@ -1,4 +1,23 @@
+import { useEffect, useState } from "react"
 import { BookOpen, Clock, Filter, PlayCircle, RefreshCcw, Search, UserRound, X } from "lucide-react"
+
+function getCloseNotice(availableUntil, nowTick = Date.now()) {
+  if (!availableUntil) return null
+  const end = new Date(availableUntil).getTime()
+  if (!Number.isFinite(end)) return null
+
+  const diff = end - nowTick
+  if (diff <= 0) return "This exam has closed"
+
+  const totalSec = Math.floor(diff / 1000)
+  const days = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const mins = Math.floor((totalSec % 3600) / 60)
+  const secs = totalSec % 60
+
+  if (days > 0) return `Closes in ${days}d ${hours}h`
+  return `Closes in ${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+}
 
 export default function StudentExamList({
   exams = [],
@@ -18,6 +37,13 @@ export default function StudentExamList({
   onRefresh,
   onTakeExam,
 }) {
+  const [nowTick, setNowTick] = useState(Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   return (
     <div className="space-y-5">
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 lg:p-5 space-y-3">
@@ -102,29 +128,50 @@ export default function StudentExamList({
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4">
-          {exams.map((exam) => (
-            <div key={exam.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform">
-              <div className="space-y-1.5">
-                <p className="text-base font-bold text-[#1a1a2e] leading-tight line-clamp-2">{exam.title}</p>
-                <div className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-orange-50 text-[#ff4b2b]">
-                  {exam.subject}
+          {exams.map((exam) => {
+            const closeNotice = getCloseNotice(exam.available_until, nowTick)
+            const isClosedBySchedule = closeNotice === "This exam has closed"
+            const startTs = exam.available_from ? new Date(exam.available_from).getTime() : null
+            const endTs = exam.available_until ? new Date(exam.available_until).getTime() : null
+            const isWithinStart = startTs == null || nowTick >= startTs
+            const isWithinEnd = endTs == null || nowTick < endTs
+            const isCurrentlyActive = isWithinStart && isWithinEnd && !isClosedBySchedule
+            return (
+              <div key={exam.id} className={`relative bg-white rounded-2xl border shadow-sm p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform ${isCurrentlyActive ? "border-emerald-400" : "border-gray-100"}`}>
+                {isCurrentlyActive && <span className="pointer-events-none absolute inset-0 rounded-2xl border border-emerald-300 animate-pulse" />}
+                {closeNotice && (
+                  <div className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border inline-flex w-fit ${closeNotice === "This exam has closed" ? "bg-red-100 text-red-700 border-red-200" : "bg-amber-100 text-amber-700 border-amber-200"}`}>
+                    {closeNotice}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 rounded-xl border border-gray-100 p-3 bg-gray-50/60">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Title</p>
+                    <p className="text-sm font-semibold text-[#1a1a2e] leading-tight line-clamp-2 mt-0.5">{exam.title}</p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Subject</p>
+                    <p className="text-sm font-semibold text-[#1a1a2e] leading-tight line-clamp-2 mt-0.5">{exam.subject}</p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex flex-wrap gap-3 text-xs text-gray-500 font-semibold">
-                <span className="inline-flex items-center gap-1"><Clock size={13} /> {exam.duration_minutes} min</span>
-                <span className="inline-flex items-center gap-1"><BookOpen size={13} /> {exam.question_count} questions</span>
-                <span className="inline-flex items-center gap-1"><UserRound size={13} /> {exam.teacher_name || "Teacher"}</span>
-              </div>
+                <div className="flex flex-wrap gap-3 text-xs text-gray-500 font-semibold">
+                  <span className="inline-flex items-center gap-1"><Clock size={13} /> {exam.duration_minutes} min</span>
+                  <span className="inline-flex items-center gap-1"><BookOpen size={13} /> {exam.question_count} questions</span>
+                  <span className="inline-flex items-center gap-1"><UserRound size={13} /> {exam.teacher_name || "Teacher"}</span>
+                </div>
 
-              <button
-                onClick={() => onTakeExam(exam)}
-                className="mt-auto w-full py-2.5 rounded-xl bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 hover:opacity-90 transition"
-              >
-                <PlayCircle size={16} /> Take Exam
-              </button>
-            </div>
-          ))}
+                <button
+                  onClick={() => onTakeExam(exam)}
+                  disabled={isClosedBySchedule}
+                  className="mt-auto w-full py-2.5 rounded-xl bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-sm font-semibold inline-flex items-center justify-center gap-2 hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <PlayCircle size={16} /> {isClosedBySchedule ? "Exam Closed" : "Take Exam"}
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

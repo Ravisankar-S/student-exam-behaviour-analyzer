@@ -6,6 +6,17 @@ from app.utils.uploads import delete_uploaded_file
 from uuid import UUID
 
 
+def _validate_options(options):
+    if options is None or len(options) < 2:
+        raise ValueError("At least 2 options are required")
+    valid_options = [opt for opt in options if (opt.option_text or "").strip()]
+    if len(valid_options) < 2:
+        raise ValueError("At least 2 non-empty options are required")
+    correct_count = sum(1 for opt in options if opt.is_correct)
+    if correct_count != 1:
+        raise ValueError("Exactly one correct option is required")
+
+
 def _serialize_question(q: Question) -> dict:
     return {
         "id": str(q.id),
@@ -49,6 +60,8 @@ def create_question(db: Session, assessment_id: str, data: QuestionCreate, teach
     ).first()
     if not a:
         return None
+
+    _validate_options(data.options)
 
     max_order = db.query(Question).filter(Question.assessment_id == assessment_id).count()
     question = Question(
@@ -104,6 +117,7 @@ def update_question(
             delete_uploaded_file(old_path)
 
     if data.options is not None:
+        _validate_options(data.options)
         for old_opt in question.options:
             db.delete(old_opt)
         db.flush()

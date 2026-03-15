@@ -10,7 +10,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import {
   ArrowLeft, Plus, Edit2, Trash2, GripVertical, AlertCircle, X,
-  CheckCircle2, HelpCircle, Image,
+  CheckCircle2, HelpCircle, Image, MinusCircle,
   LayoutDashboard, User, Menu, LogOut,
 } from "lucide-react"
 import {
@@ -18,8 +18,11 @@ import {
   deleteQuestion, reorderQuestions, uploadQuestionImage,
 } from "../api/assessments"
 
-const OPTION_LABELS = ["A", "B", "C", "D"]
 const blankQForm = { question_text: "", question_image_path: "", options: ["", "", "", ""], correct_index: 0 }
+
+function optionLabel(index) {
+  return index < 26 ? String.fromCharCode(65 + index) : `${index + 1}`
+}
 
 function toAbsoluteImageUrl(path) {
   if (!path) return null
@@ -83,12 +86,14 @@ export default function ExamQuestionsPage() {
   }
 
   function openEdit(q) {
-    const opts = ["", "", "", ""]
+    const opts = q.options?.length ? q.options.map((o) => o.option_text || "") : ["", "", "", ""]
     let correctIdx = 0
     q.options.forEach((o, i) => {
-      if (i < 4) opts[i] = o.option_text
       if (o.is_correct) correctIdx = i
     })
+    if (opts.length < 2) {
+      while (opts.length < 2) opts.push("")
+    }
     setQForm({
       question_text: q.question_text,
       question_image_path: q.question_image_path || "",
@@ -168,23 +173,6 @@ export default function ExamQuestionsPage() {
       flash("Question deleted")
     } catch {
       flash("Failed to delete", "error")
-    }
-  }
-
-  async function handleDeleteQuestionImage(question) {
-    try {
-      await updateQuestion(token, examId, question.id, {
-        question_text: question.question_text,
-        question_image_path: "",
-        options: (question.options || []).map((opt) => ({
-          option_text: opt.option_text,
-          is_correct: !!opt.is_correct,
-        })),
-      })
-      await loadQuestions()
-      flash("Question image removed")
-    } catch {
-      flash("Failed to remove question image", "error")
     }
   }
 
@@ -343,7 +331,6 @@ export default function ExamQuestionsPage() {
                       question={q}
                       index={idx}
                       onViewImage={setImageModalSrc}
-                      onDeleteImage={handleDeleteQuestionImage}
                       onEdit={openEdit}
                       onDelete={(id) => setDeleteConfirm(id)}
                     />
@@ -420,7 +407,7 @@ export default function ExamQuestionsPage() {
 // ─────────────────────────────────────────────
 // Sortable question card
 // ─────────────────────────────────────────────
-function QuestionCard({ question, index, onViewImage, onDeleteImage, onEdit, onDelete }) {
+function QuestionCard({ question, index, onViewImage, onEdit, onDelete }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.id })
 
   return (
@@ -457,13 +444,6 @@ function QuestionCard({ question, index, onViewImage, onDeleteImage, onEdit, onD
                   >
                     View picture
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeleteImage?.(question)}
-                    className="text-[11px] font-semibold text-red-500 hover:text-red-600"
-                  >
-                    Delete picture
-                  </button>
                 </div>
               </div>
             )}
@@ -478,7 +458,7 @@ function QuestionCard({ question, index, onViewImage, onDeleteImage, onEdit, onD
                 >
                   <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0
                     ${opt.is_correct ? "bg-emerald-500 text-white" : "bg-gray-200 text-gray-500"}`}>
-                    {OPTION_LABELS[i] ?? i + 1}
+                    {optionLabel(i)}
                   </span>
                   <span className="flex-1">{opt.option_text}</span>
                   {opt.is_correct && <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />}
@@ -521,6 +501,28 @@ function QuestionCard({ question, index, onViewImage, onDeleteImage, onEdit, onD
 // Add / Edit question modal
 // ─────────────────────────────────────────────
 function QuestionFormModal({ editingQ, qForm, setQForm, onViewImage, onUploadImage, imageUploading, onClose, onSubmit, loading, isValid }) {
+  function addOption() {
+    setQForm((prev) => ({
+      ...prev,
+      options: [...prev.options, ""],
+    }))
+  }
+
+  function removeOption(index) {
+    setQForm((prev) => {
+      if (prev.options.length <= 2) return prev
+      const options = prev.options.filter((_, i) => i !== index)
+      let correctIndex = prev.correct_index
+      if (index < correctIndex) correctIndex -= 1
+      if (index === correctIndex) correctIndex = 0
+      return {
+        ...prev,
+        options,
+        correct_index: Math.min(correctIndex, options.length - 1),
+      }
+    })
+  }
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl max-h-[90vh] flex flex-col">
@@ -610,7 +612,7 @@ function QuestionFormModal({ editingQ, qForm, setQForm, onViewImage, onUploadIma
                     <CheckCircle2 size={14} />
                   </button>
                   <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-500 text-xs font-bold flex items-center justify-center shrink-0">
-                    {OPTION_LABELS[i]}
+                    {optionLabel(i)}
                   </span>
                   <input
                     type="text"
@@ -620,14 +622,30 @@ function QuestionFormModal({ editingQ, qForm, setQForm, onViewImage, onUploadIma
                       opts[i] = e.target.value
                       return { ...p, options: opts }
                     })}
-                    placeholder={`Option ${OPTION_LABELS[i]}`}
+                    placeholder={`Option ${optionLabel(i)}`}
                     className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm text-[#1a1a2e] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#ff4b2b]/30 focus:border-[#ff4b2b] transition"
                   />
+                  <button
+                    type="button"
+                    onClick={() => removeOption(i)}
+                    disabled={qForm.options.length <= 2}
+                    className="text-gray-400 hover:text-red-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Remove option"
+                  >
+                    <MinusCircle size={18} />
+                  </button>
                 </div>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={addOption}
+              className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+            >
+              <Plus size={14} /> Add Option
+            </button>
             <p className="text-[11px] text-gray-400 mt-2">
-              Click the circle next to an option to mark it as the correct answer.
+              Click the circle to mark the correct answer. Minimum 2 options required.
             </p>
           </div>
         </div>

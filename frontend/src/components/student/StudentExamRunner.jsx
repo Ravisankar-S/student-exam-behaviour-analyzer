@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, CheckCircle2, SkipForward } from "lucide-react"
 
 function toAbsoluteImageUrl(path) {
@@ -12,6 +12,8 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
   const [selectedByQuestion, setSelectedByQuestion] = useState({})
   const [statusByQuestion, setStatusByQuestion] = useState({})
   const [startedAt] = useState(() => new Date().toISOString())
+  const [remainingSeconds, setRemainingSeconds] = useState(() => Math.max(0, (exam?.duration_minutes || 60) * 60))
+  const autoSubmittedRef = useRef(false)
 
   const currentQuestion = questions[currentIndex]
   const processedCount = Object.keys(statusByQuestion).length
@@ -29,6 +31,54 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
     }
     return { attempted, skipped }
   }, [statusByQuestion])
+
+  useEffect(() => {
+    const total = Math.max(0, (exam?.duration_minutes || 60) * 60)
+    setRemainingSeconds(total)
+    autoSubmittedRef.current = false
+  }, [exam?.id, exam?.duration_minutes])
+
+  function buildResponses() {
+    return questions.map((question) => {
+      const status = statusByQuestion[question.id]
+      return {
+        question_id: question.id,
+        selected_option_id: status === "answered" ? selectedByQuestion[question.id] : null,
+        skipped: status !== "answered",
+      }
+    })
+  }
+
+  function submitPayload(isAuto = false) {
+    const responses = buildResponses()
+    onSubmitAttempt({
+      responses,
+      started_at: startedAt,
+      submitted_at: new Date().toISOString(),
+      auto_submitted: isAuto,
+    })
+  }
+
+  useEffect(() => {
+    if (submitting || allHandled || questions.length === 0) return
+
+    if (remainingSeconds <= 0 && !autoSubmittedRef.current) {
+      autoSubmittedRef.current = true
+      onFlash?.("Time is up. Exam submitted automatically.", "error")
+      submitPayload(true)
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setRemainingSeconds((prev) => Math.max(0, prev - 1))
+    }, 1000)
+
+    return () => window.clearInterval(timer)
+  }, [remainingSeconds, submitting, allHandled, questions.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const minutesLeft = Math.floor(remainingSeconds / 60)
+  const secondsLeft = remainingSeconds % 60
+  const timerText = `${String(minutesLeft).padStart(2, "0")}:${String(secondsLeft).padStart(2, "0")}`
 
   function markAndAdvance(kind) {
     if (!currentQuestion) return
@@ -60,20 +110,7 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
   }
 
   function handleFinalSubmit() {
-    const responses = questions.map((question) => {
-      const status = statusByQuestion[question.id]
-      return {
-        question_id: question.id,
-        selected_option_id: status === "answered" ? selectedByQuestion[question.id] : null,
-        skipped: status !== "answered",
-      }
-    })
-
-    onSubmitAttempt({
-      responses,
-      started_at: startedAt,
-      submitted_at: new Date().toISOString(),
-    })
+    submitPayload(false)
   }
 
   return (
@@ -87,6 +124,10 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
           <div className="text-right">
             <p className="text-xs text-gray-500">Progress</p>
             <p className="text-sm font-bold text-[#1a1a2e]">{processedCount}/{questions.length} handled</p>
+          <div className="text-right">
+            <p className="text-xs text-gray-500">Time Left</p>
+            <p className={`text-sm font-bold ${remainingSeconds <= 60 ? "text-red-600" : "text-[#1a1a2e]"}`}>{timerText}</p>
+          </div>
           </div>
         </div>
 

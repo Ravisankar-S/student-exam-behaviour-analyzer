@@ -8,6 +8,7 @@ from app.models.admission_request import AdmissionRequest  # noqa: F401
 from app.models.assessment import Assessment  # noqa: F401
 from app.models.attempt import Attempt    # noqa: F401
 from app.models.question import Question, Option  # noqa: F401
+from app.models.activity_log import TeacherActivityLog  # noqa: F401
 
 
 def _sync_profile_columns():

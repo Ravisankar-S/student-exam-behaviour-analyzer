@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useAuth } from "../context/AuthContext"
 import { useNavigate } from "react-router-dom"
 import {
@@ -16,6 +16,7 @@ import {
 import {
   getMyAssessments, createAssessment, updateAssessment,
   deleteAssessment, reorderAssessments, updateProfile, getAssessmentAttempts,
+  getTeacherActivityLogs, createTeacherActivityLog,
 } from "../api/assessments"
 import {
   changePassword,
@@ -63,6 +64,69 @@ function subjectColor(subject = "") {
   let hash = 0
   for (const c of subject) hash = (hash * 31 + c.charCodeAt(0)) & 0xffff
   return SUBJECT_COLORS[hash % SUBJECT_COLORS.length]
+}
+
+function toDateTimeLocalInput(value) {
+  if (!value) return ""
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ""
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, "0")
+  const day = String(parsed.getDate()).padStart(2, "0")
+  const hours = String(parsed.getHours()).padStart(2, "0")
+  const minutes = String(parsed.getMinutes()).padStart(2, "0")
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+function localInputToUtcIso(value) {
+  if (!value) return null
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toISOString()
+}
+
+function getRemainingCloseText(availableUntil, nowTick = Date.now()) {
+  if (!availableUntil) return null
+  const end = new Date(availableUntil).getTime()
+  if (!Number.isFinite(end)) return null
+  const diff = end - nowTick
+  if (diff <= 0) return "Closed by schedule"
+
+  const totalSec = Math.floor(diff / 1000)
+  const days = Math.floor(totalSec / 86400)
+  const hours = Math.floor((totalSec % 86400) / 3600)
+  const mins = Math.floor((totalSec % 3600) / 60)
+  const secs = totalSec % 60
+
+  if (days > 0) return `Closes in ${days}d ${hours}h`
+  return `Closes in ${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`
+}
+
+function isClosedBySchedule(availableUntil, nowTick = Date.now()) {
+  if (!availableUntil) return false
+  const end = new Date(availableUntil).getTime()
+  if (!Number.isFinite(end)) return false
+  return nowTick >= end
+}
+
+function getExamStatus(exam, nowTick = Date.now()) {
+  if (!exam?.published) return "Draft"
+  if (exam.closed_manually || isClosedBySchedule(exam.available_until, nowTick)) return "Completed"
+  return "Live"
+}
+
+function getExamStatusClasses(status) {
+  if (status === "Live") return "bg-emerald-100 text-emerald-700"
+  if (status === "Completed") return "bg-red-100 text-red-700"
+  return "bg-gray-100 text-gray-600"
+}
+
+function getStatusTransitionAction(prevStatus, nextStatus) {
+  if (prevStatus === "Draft" && nextStatus === "Live") return "published"
+  if (prevStatus === "Live" && nextStatus === "Completed") return "completed"
+  if (prevStatus === "Completed" && nextStatus === "Live") return "reopened"
+  if (prevStatus === "Live" && nextStatus === "Draft") return "moved to draft"
+  return `status changed: ${prevStatus} → ${nextStatus}`
 }
 
 const BEHAVIOR_LABELS = ["Fast_Response", "High_Revision", "Deliberative", "Disengaged"]
@@ -129,6 +193,9 @@ export default function TeacherDashboard() {
   const [loadingExams, setLoadingExams]   = useState(true)
   const [showCreate, setShowCreate]       = useState(false)
   const [editingExam, setEditingExam]     = useState(null)
+  const [scheduleModalExam, setScheduleModalExam] = useState(null)
+  const [scheduleUntilValue, setScheduleUntilValue] = useState("")
+  const [scheduleSaving, setScheduleSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [toast, setToast]                 = useState(null)
   const [formLoading, setFormLoading]     = useState(false)
@@ -145,8 +212,19 @@ export default function TeacherDashboard() {
     subject: "all",
     status: "all",
   })
+  const [examLogs, setExamLogs] = useState([])
+  const [logsLoading, setLogsLoading] = useState(false)
+  const [showAllLogsModal, setShowAllLogsModal] = useState(false)
+  const examStatusSnapshotRef = useRef({})
 
-  const blankForm = { title: "", subject: "", duration_minutes: 60, published: true }
+  const blankForm = {
+    title: "",
+    subject: "",
+    duration_minutes: 60,
+    published: true,
+    available_from: "",
+    available_until: "",
+  }
   const [formData, setFormData]           = useState(blankForm)
   const [profileForm, setProfileForm]     = useState({ name: "", email: "" })
   const [profileLoading, setProfileLoading] = useState(false)
@@ -166,12 +244,16 @@ export default function TeacherDashboard() {
   const [profilePictureUploading, setProfilePictureUploading] = useState(false)
   const [profilePictureDeleting, setProfilePictureDeleting] = useState(false)
   const [imageModalSrc, setImageModalSrc] = useState(null)
+  const [nowTick, setNowTick] = useState(Date.now())
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
   }))
 
-  useEffect(() => { loadExams() }, [])
+  useEffect(() => {
+    loadExams()
+    loadExamLogs()
+  }, [])
   useEffect(() => {
     if (user) setProfileForm({ name: user.name || "", email: user.email || "" })
   }, [user])
@@ -184,11 +266,61 @@ export default function TeacherDashboard() {
     }
   }, [activeTab, user?.role]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    const previousSnapshot = examStatusSnapshotRef.current
+    const hasPreviousSnapshot = Object.keys(previousSnapshot).length > 0
+    const nextSnapshot = {}
+
+    exams.forEach((exam) => {
+      const nextStatus = getExamStatus(exam, nowTick)
+      nextSnapshot[exam.id] = nextStatus
+
+      if (!hasPreviousSnapshot) return
+      const prevStatus = previousSnapshot[exam.id]
+      if (!prevStatus || prevStatus === nextStatus) return
+      appendExamLog(exam, getStatusTransitionAction(prevStatus, nextStatus))
+    })
+
+    examStatusSnapshotRef.current = nextSnapshot
+  }, [exams, nowTick])
+
+  async function appendExamLog(exam, action) {
+    if (!exam?.title || !action) return
+    try {
+      const res = await createTeacherActivityLog(token, {
+        assessment_id: exam.id || null,
+        exam_title: exam.title,
+        exam_subject: exam.subject || "",
+        action,
+      })
+      const log = res.data
+      setExamLogs((prev) => [log, ...prev.filter((item) => item.id !== log.id)].slice(0, 300))
+    } catch {
+    }
+  }
+
+  async function loadExamLogs() {
+    setLogsLoading(true)
+    try {
+      const res = await getTeacherActivityLogs(token, 300)
+      setExamLogs(Array.isArray(res.data) ? res.data : [])
+    } catch {
+      setExamLogs([])
+    } finally {
+      setLogsLoading(false)
+    }
+  }
+
   async function loadExams() {
     setLoadingExams(true)
     try {
       const res = await getMyAssessments(token)
-      setExams(res.data)
+      setExams(Array.isArray(res.data) ? res.data : [])
     } catch {
       flash("Failed to load exams", "error")
     } finally {
@@ -203,15 +335,35 @@ export default function TeacherDashboard() {
 
   async function handleCreate() {
     if (!formData.title.trim() || !formData.subject.trim()) return
+    if (formData.available_from && formData.available_until && new Date(formData.available_until) <= new Date(formData.available_from)) {
+      flash("End time must be later than start time", "error")
+      return
+    }
     setFormLoading(true)
     try {
-      await createAssessment(token, formData)
+      const payload = {
+        title: formData.title.trim(),
+        subject: formData.subject.trim(),
+        duration_minutes: Math.max(1, parseInt(formData.duration_minutes, 10) || 60),
+        published: !!formData.published,
+        available_from: localInputToUtcIso(formData.available_from),
+        available_until: localInputToUtcIso(formData.available_until),
+      }
+      const created = await createAssessment(token, payload)
       await loadExams()
       setShowCreate(false)
       setFormData(blankForm)
+      await appendExamLog(
+        {
+          id: created?.data?.id || null,
+          title: payload.title,
+          subject: payload.subject,
+        },
+        "created"
+      )
       flash("Exam created")
-    } catch {
-      flash("Failed to create exam", "error")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to create exam", "error")
     } finally {
       setFormLoading(false)
     }
@@ -224,19 +376,34 @@ export default function TeacherDashboard() {
       subject: exam.subject,
       duration_minutes: exam.duration_minutes,
       published: exam.published,
+      available_from: toDateTimeLocalInput(exam.available_from),
+      available_until: toDateTimeLocalInput(exam.available_until),
     })
   }
 
   async function handleEdit() {
     if (!formData.title.trim() || !formData.subject.trim()) return
+    if (formData.available_from && formData.available_until && new Date(formData.available_until) <= new Date(formData.available_from)) {
+      flash("End time must be later than start time", "error")
+      return
+    }
     setFormLoading(true)
     try {
-      await updateAssessment(token, editingExam.id, formData)
+      const payload = {
+        title: formData.title.trim(),
+        subject: formData.subject.trim(),
+        duration_minutes: Math.max(1, parseInt(formData.duration_minutes, 10) || 60),
+        published: !!formData.published,
+        available_from: localInputToUtcIso(formData.available_from),
+        available_until: localInputToUtcIso(formData.available_until),
+      }
+      await updateAssessment(token, editingExam.id, payload)
       await loadExams()
       setEditingExam(null)
+      await appendExamLog({ id: editingExam.id, title: payload.title, subject: payload.subject }, "updated")
       flash("Exam updated")
-    } catch {
-      flash("Failed to update exam", "error")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to update exam", "error")
     } finally {
       setFormLoading(false)
     }
@@ -244,9 +411,11 @@ export default function TeacherDashboard() {
 
   async function handleDelete(id) {
     try {
+      const deletedExam = exams.find((exam) => exam.id === id)
       await deleteAssessment(token, id)
       setDeleteConfirm(null)
       await loadExams()
+      if (deletedExam?.title) await appendExamLog(deletedExam, "deleted")
       flash("Exam deleted")
     } catch {
       flash("Failed to delete exam", "error")
@@ -260,6 +429,61 @@ export default function TeacherDashboard() {
       flash(exam.published ? "Exam unpublished" : "Exam is now live")
     } catch {
       flash("Failed to update", "error")
+    }
+  }
+
+  async function handleManualCloseToggle(exam, reopenFromSchedule = false) {
+    try {
+      if (reopenFromSchedule) {
+        await updateAssessment(token, exam.id, { closed_manually: false, available_until: null })
+        setExams((prev) => prev.map((item) => (
+          item.id === exam.id
+            ? { ...item, closed_manually: false, available_until: null }
+            : item
+        )))
+        flash("Exam reopened")
+        return
+      }
+
+      const next = !exam.closed_manually
+      await updateAssessment(token, exam.id, { closed_manually: next })
+      setExams((prev) => prev.map((item) => (
+        item.id === exam.id
+          ? { ...item, closed_manually: next }
+          : item
+      )))
+      flash(next ? "Exam closed manually" : "Exam reopened")
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to update exam status", "error")
+    }
+  }
+
+  function openScheduleModal(exam) {
+    setScheduleModalExam(exam)
+    setScheduleUntilValue(toDateTimeLocalInput(exam.available_until))
+  }
+
+  function closeScheduleModal() {
+    if (scheduleSaving) return
+    setScheduleModalExam(null)
+    setScheduleUntilValue("")
+  }
+
+  async function saveScheduleUntil() {
+    if (!scheduleModalExam) return
+    setScheduleSaving(true)
+    try {
+      await updateAssessment(token, scheduleModalExam.id, {
+        available_until: localInputToUtcIso(scheduleUntilValue),
+      })
+      await loadExams()
+      await appendExamLog(scheduleModalExam, scheduleUntilValue ? "close schedule set" : "close schedule cleared")
+      flash(scheduleUntilValue ? "Close schedule updated" : "Close schedule cleared")
+      closeScheduleModal()
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to update close schedule", "error")
+    } finally {
+      setScheduleSaving(false)
     }
   }
 
@@ -409,14 +633,13 @@ export default function TeacherDashboard() {
   const totalQuestions = exams.reduce((s, e) => s + (e.question_count || 0), 0)
   const subjectOptions = [...new Set(exams.map(e => e.subject).filter(Boolean))].sort()
   const filteredExams = exams.filter((exam) => {
+    const status = getExamStatus(exam, nowTick).toLowerCase()
     const query = examFilters.query.trim().toLowerCase()
     const byQuery = !query
       || exam.title.toLowerCase().includes(query)
       || exam.subject.toLowerCase().includes(query)
     const bySubject = examFilters.subject === "all" || exam.subject === examFilters.subject
-    const byStatus = examFilters.status === "all"
-      || (examFilters.status === "published" && exam.published)
-      || (examFilters.status === "draft" && !exam.published)
+    const byStatus = examFilters.status === "all" || examFilters.status === status
     return byQuery && bySubject && byStatus
   })
   const allTeacherAttempts = exams.flatMap((exam) =>
@@ -515,6 +738,8 @@ export default function TeacherDashboard() {
     onEdit: openEdit,
     onDelete: (id) => setDeleteConfirm(id),
     onTogglePublish: handleTogglePublish,
+    onManualCloseToggle: handleManualCloseToggle,
+    onSchedule: openScheduleModal,
     onQuestions: (id) => navigate(`/dashboard/teacher/exam/${id}/questions`),
   }
 
@@ -744,7 +969,7 @@ export default function TeacherDashboard() {
                   <EmptyExams onCreate={() => setShowCreate(true)} />
                 ) : (
                   <div className="p-4">
-                    <ExamCardsGrid exams={exams.slice(0, 6)} sensors={sensors} onDragEnd={handleDragEnd} reorderEnabled={false} {...sharedCardProps} />
+                    <ExamCardsGrid exams={exams.slice(0, 6)} sensors={sensors} onDragEnd={handleDragEnd} reorderEnabled={false} nowTick={nowTick} {...sharedCardProps} />
                   </div>
                 )}
               </div>
@@ -797,8 +1022,9 @@ export default function TeacherDashboard() {
                     type="select"
                     options={[
                       { value: "all", label: "All" },
-                      { value: "published", label: "Published" },
+                      { value: "live", label: "Live" },
                       { value: "draft", label: "Draft" },
+                      { value: "completed", label: "Completed" },
                     ]}
                   />
                   <div className="sm:col-span-2">
@@ -832,8 +1058,42 @@ export default function TeacherDashboard() {
                   No exams match the selected filters.
                 </div>
               ) : (
-                <ExamCardsGrid exams={filteredExams} sensors={sensors} onDragEnd={handleDragEnd} reorderEnabled={reorderMode} {...sharedCardProps} />
+                <ExamCardsGrid exams={filteredExams} sensors={sensors} onDragEnd={handleDragEnd} reorderEnabled={reorderMode} nowTick={nowTick} {...sharedCardProps} />
               )}
+
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                  <h3 className="font-bold text-[#1a1a2e] text-sm">Activity Logs</h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-gray-400">{examLogs.length} entries</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAllLogsModal(true)}
+                      className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                      disabled={examLogs.length === 0}
+                    >
+                      View All
+                    </button>
+                  </div>
+                </div>
+                {logsLoading ? (
+                  <div className="px-5 py-6 text-sm text-gray-500">Loading activity logs…</div>
+                ) : examLogs.length === 0 ? (
+                  <div className="px-5 py-6 text-sm text-gray-500">No activity yet.</div>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                    {examLogs.slice(0, 4).map((log) => (
+                      <div key={log.id} className="px-5 py-3 flex items-center justify-between gap-3 text-sm">
+                        <div className="min-w-0">
+                          <p className="text-gray-700 font-medium truncate">{log.message || `${log.exam_title} [${log.exam_subject || "No Subject"}] ${log.action}`}</p>
+                          <p className="text-[11px] text-gray-400 truncate">{log.exam_subject || "No Subject"}</p>
+                        </div>
+                        <span className="text-[11px] text-gray-400 shrink-0">{new Date(log.created_at || log.timestamp).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1023,9 +1283,17 @@ export default function TeacherDashboard() {
 
                         return (
                           <div key={exam.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+                            <div className="grid grid-cols-2 gap-3 rounded-xl border border-gray-100 p-3 bg-gray-50/60">
+                              <div>
+                                <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Title</p>
+                                <p className="font-semibold text-[#1a1a2e] text-sm mt-0.5 line-clamp-2">{exam.title}</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Subject</p>
+                                <p className="font-semibold text-[#1a1a2e] text-sm mt-0.5 line-clamp-2">{exam.subject}</p>
+                              </div>
+                            </div>
                             <div>
-                              <p className="text-xs text-gray-400 font-semibold uppercase">{exam.subject}</p>
-                              <h3 className="font-bold text-[#1a1a2e] text-lg mt-1">{exam.title}</h3>
                               <p className="text-sm text-gray-500 mt-1">{exam.duration_minutes} min · {exam.question_count || 0} questions · {exam.attempt_count || 0} attempts</p>
                             </div>
 
@@ -1339,6 +1607,20 @@ export default function TeacherDashboard() {
           onClose={() => setEditingExam(null)}
           onSubmit={handleEdit} loading={formLoading} submitLabel="Save Changes" />
       )}
+      <ExamScheduleModal
+        open={!!scheduleModalExam}
+        exam={scheduleModalExam}
+        value={scheduleUntilValue}
+        onChange={setScheduleUntilValue}
+        onClose={closeScheduleModal}
+        onSave={saveScheduleUntil}
+        saving={scheduleSaving}
+      />
+      <ExamLogsModal
+        open={showAllLogsModal}
+        logs={examLogs}
+        onClose={() => setShowAllLogsModal(false)}
+      />
       {deleteConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
@@ -1388,7 +1670,7 @@ export default function TeacherDashboard() {
 // ─────────────────────────────────────────────
 // Cards grid with DnD context
 // ─────────────────────────────────────────────
-function ExamCardsGrid({ exams, sensors, onDragEnd, onEdit, onDelete, onTogglePublish, onQuestions, reorderEnabled }) {
+function ExamCardsGrid({ exams, sensors, onDragEnd, onEdit, onDelete, onTogglePublish, onManualCloseToggle, onSchedule, onQuestions, reorderEnabled, nowTick }) {
   const grid = (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
       {exams.map(exam => (
@@ -1396,8 +1678,11 @@ function ExamCardsGrid({ exams, sensors, onDragEnd, onEdit, onDelete, onTogglePu
           onEdit={onEdit}
           onDelete={onDelete}
           onTogglePublish={onTogglePublish}
+          onManualCloseToggle={onManualCloseToggle}
+          onSchedule={onSchedule}
           onQuestions={onQuestions}
           reorderEnabled={reorderEnabled}
+          nowTick={nowTick}
         />
       ))}
     </div>
@@ -1417,9 +1702,14 @@ function ExamCardsGrid({ exams, sensors, onDragEnd, onEdit, onDelete, onTogglePu
 // ─────────────────────────────────────────────
 // Individual sortable exam card
 // ─────────────────────────────────────────────
-function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onQuestions, reorderEnabled }) {
+function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onManualCloseToggle, onSchedule, onQuestions, reorderEnabled, nowTick }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: exam.id, disabled: !reorderEnabled })
   const col = subjectColor(exam.subject)
+  const closeText = getRemainingCloseText(exam.available_until, nowTick)
+  const status = getExamStatus(exam, nowTick)
+  const isLive = status === "Live"
+  const showReopen = status === "Completed"
+  const scheduleClosed = isClosedBySchedule(exam.available_until, nowTick)
 
   return (
     <div
@@ -1433,19 +1723,26 @@ function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onQuestions, reorde
       <div className="h-1 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c]" />
 
       <div className="p-5 flex flex-col flex-1 gap-3">
+        {closeText && (
+          <div className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border inline-flex w-fit ${closeText === "Closed by schedule" ? "bg-red-100 text-red-700 border-red-200" : "bg-blue-100 text-blue-700 border-blue-200"}`}>
+            {closeText}
+          </div>
+        )}
         {/* Row 1: subject tag · status pill · drag handle */}
         <div className="flex items-center justify-between gap-2">
-          <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${col.bg} ${col.text}`}>
-            {exam.subject}
-          </span>
+          <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${col.bg} ${col.text}`}>{exam.subject}</span>
           <div className="flex items-center gap-1 shrink-0">
+            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${getExamStatusClasses(status)}`}>
+              {status === "Live" ? <Eye size={10} /> : status === "Completed" ? <X size={10} /> : <EyeOff size={10} />}
+              {status}
+            </span>
             <button onClick={() => onTogglePublish(exam)}
               className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold transition-colors
                 ${exam.published
-                  ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                  ? "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
-              {exam.published ? <Eye size={10} /> : <EyeOff size={10} />}
-              {exam.published ? "Live" : "Draft"}
+              {exam.published ? <EyeOff size={10} /> : <Eye size={10} />}
+              {exam.published ? "Set Draft" : "Publish"}
             </button>
             {reorderEnabled && (
               <button {...attributes} {...listeners}
@@ -1457,8 +1754,24 @@ function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onQuestions, reorde
           </div>
         </div>
 
-        {/* Title */}
-        <h3 className="font-bold text-[#1a1a2e] text-base leading-snug line-clamp-2 flex-1">{exam.title}</h3>
+        <div className="grid grid-cols-2 gap-3 rounded-xl border border-gray-100 p-3 bg-gray-50/60">
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Title</p>
+            <p className="font-semibold text-[#1a1a2e] text-sm leading-snug line-clamp-2 mt-0.5">{exam.title}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Subject</p>
+            <p className="font-semibold text-[#1a1a2e] text-sm leading-snug line-clamp-2 mt-0.5">{exam.subject}</p>
+          </div>
+        </div>
+
+        {(exam.available_from || exam.available_until) && (
+          <p className="text-[11px] text-gray-500 font-semibold">
+            {exam.available_from ? `Starts: ${new Date(exam.available_from).toLocaleString()}` : "Starts: Immediate"}
+            {" · "}
+            {exam.available_until ? `Ends: ${new Date(exam.available_until).toLocaleString()}` : "Ends: Manual / Open"}
+          </p>
+        )}
 
         {/* Stats row */}
         <div className="flex items-center gap-3 text-xs text-gray-400 font-semibold">
@@ -1472,6 +1785,21 @@ function ExamCard({ exam, onEdit, onDelete, onTogglePublish, onQuestions, reorde
           <button onClick={() => onQuestions(exam.id)}
             className="flex items-center justify-center gap-1.5 py-2 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-xs font-bold rounded-xl hover:opacity-90 transition">
             <HelpCircle size={13} /> Go to Questions
+          </button>
+          <button
+            onClick={() => onSchedule(exam)}
+            disabled={!isLive}
+            className={`flex items-center justify-center gap-1.5 py-2 text-white text-xs font-bold rounded-xl transition-colors ${isLive ? "bg-blue-500 hover:bg-blue-600" : "bg-blue-300 cursor-not-allowed"}`}
+          >
+            <Clock size={13} /> Schedule Close
+          </button>
+          <button
+            onClick={() => onManualCloseToggle(exam, scheduleClosed)}
+            disabled={!isLive && !showReopen}
+            className={`flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-xl transition-colors ${!isLive && !showReopen ? "bg-amber-300 text-white cursor-not-allowed" : showReopen ? "bg-emerald-500 text-white hover:bg-emerald-600" : "bg-amber-500 text-white hover:bg-amber-600"}`}
+          >
+            {showReopen ? <Eye size={13} /> : <EyeOff size={13} />}
+            {showReopen ? "Reopen Exam" : "Close Manually"}
           </button>
           <button onClick={() => onDelete(exam.id)}
             className="flex items-center justify-center gap-1.5 py-2 bg-red-500 text-white text-xs font-bold rounded-xl hover:bg-red-600 transition-colors" title="Delete">
@@ -1561,6 +1889,23 @@ function ExamFormModal({ title, formData, setFormData, onClose, onSubmit, loadin
               <span className={`h-6 w-6 rounded-full bg-white shadow transition-transform ${formData.published ? "translate-x-5" : "translate-x-0"}`} />
             </button>
           </div>
+
+          {!formData.published && (
+            <>
+              <Field
+                label="Active From (Optional)"
+                type="datetime-local"
+                value={formData.available_from || ""}
+                onChange={(v) => setFormData((p) => ({ ...p, available_from: v }))}
+              />
+              <Field
+                label="Active Until (Optional)"
+                type="datetime-local"
+                value={formData.available_until || ""}
+                onChange={(v) => setFormData((p) => ({ ...p, available_until: v }))}
+              />
+            </>
+          )}
         </div>
         <div className="px-6 pb-5 flex gap-3">
           <button onClick={onClose}
@@ -1571,6 +1916,84 @@ function ExamFormModal({ title, formData, setFormData, onClose, onSubmit, loadin
             className="flex-1 py-2.5 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-sm font-semibold rounded-xl hover:opacity-90 transition disabled:opacity-50">
             {loading ? "Saving…" : submitLabel}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ExamScheduleModal({ open, exam, value, onChange, onClose, onSave, saving }) {
+  if (!open || !exam) return null
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-bold text-[#1a1a2e]">Schedule Exam Close</h3>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-gray-600">
+            {exam.title} · {exam.subject}
+          </p>
+          <Field
+            label="Close Date & Time"
+            type="datetime-local"
+            value={value}
+            onChange={onChange}
+            placeholder=""
+          />
+          <p className="text-xs text-gray-500">Leave empty to remove scheduled close time.</p>
+        </div>
+        <div className="px-6 pb-5 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 border border-gray-200 text-gray-600 text-sm font-semibold rounded-xl hover:bg-gray-50 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className="flex-1 py-2.5 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-sm font-semibold rounded-xl hover:opacity-90 transition disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save Schedule"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ExamLogsModal({ open, logs, onClose }) {
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-xl max-h-[85vh] flex flex-col" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-bold text-[#1a1a2e]">Detailed Activity Logs</h3>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="px-6 py-4 overflow-y-auto">
+          {logs.length === 0 ? (
+            <p className="text-sm text-gray-500">No activity logs found.</p>
+          ) : (
+            <div className="space-y-3">
+              {logs.map((log) => (
+                <div key={log.id} className="rounded-xl border border-gray-100 p-3">
+                  <p className="text-sm font-semibold text-[#1a1a2e]">{log.exam_title}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Subject: {log.exam_subject || "No Subject"}</p>
+                  <p className="text-xs text-gray-600 mt-1">Action: {log.action}</p>
+                  <p className="text-[11px] text-gray-400 mt-1">{new Date(log.created_at || log.timestamp).toLocaleString()}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

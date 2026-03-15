@@ -9,6 +9,9 @@ class AssessmentCreate(BaseModel):
     subject: str
     duration_minutes: int = 60
     published: bool = False
+    available_from: Optional[datetime] = None
+    available_until: Optional[datetime] = None
+    closed_manually: bool = False
 
 
 class AssessmentUpdate(BaseModel):
@@ -16,6 +19,9 @@ class AssessmentUpdate(BaseModel):
     subject: Optional[str] = None
     duration_minutes: Optional[int] = None
     published: Optional[bool] = None
+    available_from: Optional[datetime] = None
+    available_until: Optional[datetime] = None
+    closed_manually: Optional[bool] = None
 
 
 class AssessmentOut(BaseModel):
@@ -24,6 +30,10 @@ class AssessmentOut(BaseModel):
     subject: str
     duration_minutes: int
     published: bool
+    available_from: Optional[datetime] = None
+    available_until: Optional[datetime] = None
+    closed_manually: bool = False
+    manually_closed_at: Optional[datetime] = None
     created_by: UUID
     created_at: datetime
     attempt_count: int = 0
@@ -42,3 +52,21 @@ class StudentAttemptSubmitRequest(BaseModel):
     responses: List[StudentAttemptResponseItem]
     started_at: Optional[datetime] = None
     submitted_at: Optional[datetime] = None
+
+
+class TeacherActivityLogCreate(BaseModel):
+    assessment_id: Optional[str] = None
+    exam_title: str
+    exam_subject: Optional[str] = None
+    action: str
+
+
+class TeacherActivityLogOut(BaseModel):
+    id: str
+    teacher_id: str
+    assessment_id: Optional[str] = None
+    exam_title: str
+    exam_subject: Optional[str] = None
+    action: str
+    message: str
+    created_at: str

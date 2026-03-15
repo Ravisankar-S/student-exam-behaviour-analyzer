@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1.auth import router as auth_router
 from app.api.v1.assessments import router as assessments_router
 from app.api.v1.questions import router as questions_router
+from app.api.v1.admin_analytics import router as admin_analytics_router
 from app.db.init_db import init_db
 
 app = FastAPI(title="Argus.ai — Student Exam Behaviour Analyzer")
@@ -30,3 +31,4 @@ def on_startup():
 app.include_router(auth_router)
 app.include_router(assessments_router)
 app.include_router(questions_router)
+app.include_router(admin_analytics_router)

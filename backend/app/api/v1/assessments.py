@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.schemas.assessment import AssessmentCreate, AssessmentUpdate, StudentAttemptSubmitRequest
+from app.schemas.assessment import AssessmentCreate, AssessmentUpdate, StudentAttemptSubmitRequest, TeacherActivityLogCreate
 from app.schemas.question import ReorderRequest
 from app.services.assessment_service import (
     get_teacher_assessments,
@@ -10,6 +10,8 @@ from app.services.assessment_service import (
     delete_assessment,
     reorder_assessments,
     get_assessment_attempts,
+    get_teacher_activity_logs,
+    create_teacher_activity_log,
     _serialize,
 )
 from app.api.deps import get_db, get_current_user
@@ -17,7 +19,7 @@ from app.models.user import User, RoleEnum
 from app.models.attempt import Attempt
 from app.models.assessment import Assessment
 from app.models.question import Question
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
@@ -36,12 +38,24 @@ def require_student(current_user: User = Depends(get_current_user)):
 
 
 def _serialize_published_assessment(a: Assessment, db: Session):
+    def _to_utc_iso(value: Optional[datetime]) -> Optional[str]:
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            normalized = value.astimezone(timezone.utc)
+        else:
+            normalized = value.replace(tzinfo=timezone.utc)
+        return normalized.isoformat().replace("+00:00", "Z")
+
     q_count = db.query(Question).filter(Question.assessment_id == a.id).count()
     return {
         "id": str(a.id),
         "title": a.title,
         "subject": a.subject,
         "duration_minutes": a.duration_minutes,
+        "available_from": _to_utc_iso(a.available_from),
+        "available_until": _to_utc_iso(a.available_until),
+        "closed_manually": bool(a.closed_manually),
         "question_count": q_count,
         "created_by": str(a.created_by),
         "teacher_id": str(a.created_by),
@@ -51,12 +65,56 @@ def _serialize_published_assessment(a: Assessment, db: Session):
     }
 
 
+def _is_exam_accessible(assessment: Assessment, now: Optional[datetime] = None) -> bool:
+    def _as_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    moment = _as_naive_utc(now or datetime.utcnow())
+    available_from = _as_naive_utc(assessment.available_from)
+    available_until = _as_naive_utc(assessment.available_until)
+
+    if not assessment.published:
+        return False
+    if assessment.closed_manually:
+        return False
+    if available_from and moment < available_from:
+        return False
+    if available_until and moment >= available_until:
+        return False
+    return True
+
+
 @router.get("/mine")
 def list_my_assessments(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher),
 ):
     return get_teacher_assessments(db, current_user.id)
+
+
+@router.get("/activity-logs")
+def list_activity_logs(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_teacher),
+):
+    return get_teacher_activity_logs(db, current_user.id, limit)
+
+
+@router.post("/activity-logs", status_code=201)
+def create_activity_log(
+    data: TeacherActivityLogCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_teacher),
+):
+    try:
+        return create_teacher_activity_log(db, current_user.id, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/published")
@@ -76,6 +134,7 @@ def list_published_assessments(
         query = query.filter(Assessment.subject.ilike(subject.strip()))
 
     exams = query.order_by(Assessment.created_at.desc()).all()
+    exams = [exam for exam in exams if _is_exam_accessible(exam)]
     return [_serialize_published_assessment(exam, db) for exam in exams]
 
 
@@ -85,12 +144,9 @@ def get_public_questions(
     db: Session = Depends(get_db),
     _: User = Depends(require_student),
 ):
-    assessment = db.query(Assessment).filter(
-        Assessment.id == assessment_id,
-        Assessment.published.is_(True),
-    ).first()
-    if not assessment:
-        raise HTTPException(status_code=404, detail="Published assessment not found")
+    assessment = db.query(Assessment).filter(Assessment.id == assessment_id).first()
+    if not assessment or not _is_exam_accessible(assessment):
+        raise HTTPException(status_code=404, detail="Exam is not currently available")
 
     questions = db.query(Question).filter(
         Question.assessment_id == assessment.id,
@@ -122,12 +178,9 @@ def submit_student_attempt(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_student),
 ):
-    assessment = db.query(Assessment).filter(
-        Assessment.id == assessment_id,
-        Assessment.published.is_(True),
-    ).first()
-    if not assessment:
-        raise HTTPException(status_code=404, detail="Published assessment not found")
+    assessment = db.query(Assessment).filter(Assessment.id == assessment_id).first()
+    if not assessment or not _is_exam_accessible(assessment):
+        raise HTTPException(status_code=404, detail="Exam is not currently available")
 
     questions = db.query(Question).filter(
         Question.assessment_id == assessment.id,
@@ -212,7 +265,10 @@ def create(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher),
 ):
-    return create_assessment(db, data, current_user.id)
+    try:
+        return create_assessment(db, data, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/{assessment_id}")
@@ -234,7 +290,10 @@ def update(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_teacher),
 ):
-    result = update_assessment(db, assessment_id, data, current_user.id)
+    try:
+        result = update_assessment(db, assessment_id, data, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if not result:
         raise HTTPException(status_code=404, detail="Assessment not found")
     return result

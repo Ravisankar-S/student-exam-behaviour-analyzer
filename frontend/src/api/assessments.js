@@ -26,6 +26,12 @@ export const reorderAssessments = (token, ids) =>
 export const getAssessmentAttempts = (token, id) =>
   API.get(`/assessments/${id}/attempts`, authHeader(token))
 
+export const getTeacherActivityLogs = (token, limit = 100) =>
+  API.get(`/assessments/activity-logs?limit=${limit}`, authHeader(token))
+
+export const createTeacherActivityLog = (token, data) =>
+  API.post("/assessments/activity-logs", data, authHeader(token))
+
 export const getPublishedAssessments = (token, params = {}) => {
   const searchParams = new URLSearchParams()
   if (params.q) searchParams.set("q", params.q)

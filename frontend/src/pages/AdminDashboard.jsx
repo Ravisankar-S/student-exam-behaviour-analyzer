@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom"
 import {
   Bell,
   Check,
+  ChevronDown,
   LayoutDashboard,
   LogOut,
   Menu,
+  BarChart3,
   RotateCcw,
   Shield,
   User,
@@ -13,7 +15,6 @@ import {
   UserCheck,
   X,
   Trash2,
-  ChevronDown,
 } from "lucide-react"
 import { useAuth } from "../context/AuthContext"
 import {
@@ -30,6 +31,26 @@ import { updateProfile } from "../api/assessments"
 import ChangePasswordModal from "../components/ChangePasswordModal"
 import Avatar from "../components/dashboard/DashboardAvatar"
 import ImagePreviewModal from "../components/dashboard/ImagePreviewModal"
+import {
+  getAdminFailureRates,
+  getAdminOverview,
+  getAdminStudentHistory,
+  getAdminStudentsDirectory,
+  getAdminStudentSubjectBehaviour,
+  getAdminTeacherExamAnalytics,
+  getAdminTeachersDirectory,
+} from "../api/adminAnalytics"
+import StudentAnalyticsDetailPanel from "../components/admin/StudentAnalyticsDetailPanel"
+import TeacherAnalyticsDetailPanel from "../components/admin/TeacherAnalyticsDetailPanel"
+import AnalyticsLayerTray from "../components/admin/AnalyticsLayerTray"
+
+const defaultStudentHistoryFilters = {
+  startDate: "",
+  endDate: "",
+  subject: "",
+  teacherId: "",
+  assessmentId: "",
+}
 
 function formatTime(value) {
   if (!value) return "—"
@@ -62,6 +83,34 @@ export default function AdminDashboard() {
   const [loadingTeachers, setLoadingTeachers] = useState(false)
   const [studentActionMap, setStudentActionMap] = useState({})
 
+  const [overview, setOverview] = useState(null)
+  const [overviewLoading, setOverviewLoading] = useState(false)
+  const [analyticsStudents, setAnalyticsStudents] = useState([])
+  const [analyticsTeachers, setAnalyticsTeachers] = useState([])
+  const [failureRates, setFailureRates] = useState([])
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [analyticsFilters, setAnalyticsFilters] = useState({
+    studentQuery: "",
+    studentDepartment: "",
+    teacherQuery: "",
+    teacherDepartment: "",
+  })
+  const [selectedAnalyticsStudentId, setSelectedAnalyticsStudentId] = useState(null)
+  const [selectedAnalyticsTeacherId, setSelectedAnalyticsTeacherId] = useState(null)
+  const [studentHistoryFilters, setStudentHistoryFilters] = useState(defaultStudentHistoryFilters)
+  const [studentHistoryItems, setStudentHistoryItems] = useState([])
+  const [studentHistoryFilterOptions, setStudentHistoryFilterOptions] = useState({ subjects: [], teachers: [], exams: [] })
+  const [studentHistoryLoading, setStudentHistoryLoading] = useState(false)
+  const [subjectBehaviourItems, setSubjectBehaviourItems] = useState([])
+  const [subjectBehaviourLoading, setSubjectBehaviourLoading] = useState(false)
+  const [teacherExamSubject, setTeacherExamSubject] = useState("")
+  const [teacherExamData, setTeacherExamData] = useState(null)
+  const [teacherExamLoading, setTeacherExamLoading] = useState(false)
+  const [analyticsTrayOpen, setAnalyticsTrayOpen] = useState(false)
+  const [analyticsLayer, setAnalyticsLayer] = useState("students")
+  const [studentLayerView, setStudentLayerView] = useState("list")
+  const [teacherLayerView, setTeacherLayerView] = useState("list")
+
   const [createTeacherOpen, setCreateTeacherOpen] = useState(false)
   const [teacherCreating, setTeacherCreating] = useState(false)
   const [teacherForm, setTeacherForm] = useState({
@@ -87,6 +136,7 @@ export default function AdminDashboard() {
     { key: "profile", label: "Profile", Icon: User },
     { key: "students", label: "Manage Students", Icon: Users },
     { key: "faculty", label: "Manage Faculty", Icon: UserCheck },
+    { key: "analytics", label: "Platform Analytics", Icon: BarChart3 },
   ]
 
   useEffect(() => {
@@ -96,7 +146,37 @@ export default function AdminDashboard() {
   useEffect(() => {
     loadStudentsData()
     loadFacultyData()
+    loadAnalyticsOverview()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab !== "analytics") return
+    loadAnalyticsData()
+  }, [activeTab, analyticsFilters]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab !== "analytics" || studentLayerView !== "detail" || !selectedAnalyticsStudentId) return
+    loadStudentHistory(selectedAnalyticsStudentId)
+  }, [
+    activeTab,
+    studentLayerView,
+    selectedAnalyticsStudentId,
+    studentHistoryFilters.startDate,
+    studentHistoryFilters.endDate,
+    studentHistoryFilters.subject,
+    studentHistoryFilters.teacherId,
+    studentHistoryFilters.assessmentId,
+  ]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab !== "analytics" || studentLayerView !== "detail" || !selectedAnalyticsStudentId) return
+    loadStudentSubjectBehaviour(selectedAnalyticsStudentId)
+  }, [activeTab, studentLayerView, selectedAnalyticsStudentId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeTab !== "analytics" || teacherLayerView !== "detail" || !selectedAnalyticsTeacherId) return
+    loadTeacherExamDetail(selectedAnalyticsTeacherId)
+  }, [activeTab, teacherLayerView, selectedAnalyticsTeacherId, teacherExamSubject]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     function onPointerDown(event) {
@@ -118,6 +198,108 @@ export default function AdminDashboard() {
 
   async function loadFacultyData() {
     await loadTeachers()
+  }
+
+  async function loadAnalyticsOverview() {
+    setOverviewLoading(true)
+    try {
+      const res = await getAdminOverview(token)
+      setOverview(res.data || null)
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load platform overview", "error")
+    } finally {
+      setOverviewLoading(false)
+    }
+  }
+
+  async function loadAnalyticsData() {
+    setAnalyticsLoading(true)
+    try {
+      const [studentsRes, teachersRes, failureRes] = await Promise.all([
+        getAdminStudentsDirectory(token, {
+          q: analyticsFilters.studentQuery || undefined,
+          department: analyticsFilters.studentDepartment || undefined,
+          page: 1,
+          page_size: 8,
+        }),
+        getAdminTeachersDirectory(token, {
+          q: analyticsFilters.teacherQuery || undefined,
+          department: analyticsFilters.teacherDepartment || undefined,
+          page: 1,
+          page_size: 8,
+        }),
+        getAdminFailureRates(token, {
+          page: 1,
+          page_size: 8,
+        }),
+      ])
+
+      const students = studentsRes.data?.items || []
+      const teachers = teachersRes.data?.items || []
+      setAnalyticsStudents(students)
+      setAnalyticsTeachers(teachers)
+      setFailureRates(failureRes.data?.items || [])
+
+      setSelectedAnalyticsStudentId((prev) => (prev && students.some((item) => item.student_id === prev) ? prev : null))
+      setSelectedAnalyticsTeacherId((prev) => (prev && teachers.some((item) => item.teacher_id === prev) ? prev : null))
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load analytics data", "error")
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }
+
+  async function loadStudentHistory(studentId) {
+    setStudentHistoryLoading(true)
+    try {
+      const response = await getAdminStudentHistory(token, studentId, {
+        start_date: studentHistoryFilters.startDate || undefined,
+        end_date: studentHistoryFilters.endDate || undefined,
+        subject: studentHistoryFilters.subject || undefined,
+        teacher_id: studentHistoryFilters.teacherId || undefined,
+        assessment_id: studentHistoryFilters.assessmentId || undefined,
+        page: 1,
+        page_size: 12,
+      })
+      setStudentHistoryItems(response.data?.items || [])
+      setStudentHistoryFilterOptions(response.data?.filters || { subjects: [], teachers: [], exams: [] })
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load student history", "error")
+      setStudentHistoryItems([])
+      setStudentHistoryFilterOptions({ subjects: [], teachers: [], exams: [] })
+    } finally {
+      setStudentHistoryLoading(false)
+    }
+  }
+
+  async function loadStudentSubjectBehaviour(studentId) {
+    setSubjectBehaviourLoading(true)
+    try {
+      const response = await getAdminStudentSubjectBehaviour(token, studentId)
+      setSubjectBehaviourItems(response.data?.items || [])
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load subject behaviour", "error")
+      setSubjectBehaviourItems([])
+    } finally {
+      setSubjectBehaviourLoading(false)
+    }
+  }
+
+  async function loadTeacherExamDetail(teacherId) {
+    setTeacherExamLoading(true)
+    try {
+      const response = await getAdminTeacherExamAnalytics(token, teacherId, {
+        subject: teacherExamSubject || undefined,
+        page: 1,
+        page_size: 12,
+      })
+      setTeacherExamData(response.data || null)
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load teacher analytics", "error")
+      setTeacherExamData(null)
+    } finally {
+      setTeacherExamLoading(false)
+    }
   }
 
   async function loadTeachers() {
@@ -287,6 +469,41 @@ export default function AdminDashboard() {
     setProfileMenuOpen(false)
   }
 
+  function handleAnalyticsLayerChange(layerKey) {
+    setAnalyticsLayer(layerKey)
+    if (layerKey === "students") setStudentLayerView("list")
+    if (layerKey === "teachers") setTeacherLayerView("list")
+    goTab("analytics")
+  }
+
+  function handleSelectAnalyticsStudent(studentId) {
+    setSelectedAnalyticsStudentId(studentId)
+    setStudentHistoryFilters(defaultStudentHistoryFilters)
+    setStudentLayerView("detail")
+  }
+
+  function handleSelectAnalyticsTeacher(teacherId) {
+    setSelectedAnalyticsTeacherId(teacherId)
+    setTeacherExamSubject("")
+    setTeacherLayerView("detail")
+  }
+
+  function backToStudentDirectory() {
+    setStudentLayerView("list")
+  }
+
+  function backToTeacherDirectory() {
+    setTeacherLayerView("list")
+  }
+
+  function handleStudentHistoryFilterChange(field, value) {
+    setStudentHistoryFilters((prev) => ({ ...prev, [field]: value }))
+  }
+
+  function clearStudentHistoryFilters() {
+    setStudentHistoryFilters(defaultStudentHistoryFilters)
+  }
+
   function handleLogout() {
     logout()
     navigate("/")
@@ -303,6 +520,8 @@ export default function AdminDashboard() {
   }, [studentRequests, notificationDismissed])
 
   const sectionTitle = navItems.find((item) => item.key === activeTab)?.label
+  const selectedStudent = analyticsStudents.find((item) => item.student_id === selectedAnalyticsStudentId) || null
+  const selectedTeacher = analyticsTeachers.find((item) => item.teacher_id === selectedAnalyticsTeacherId) || null
 
   return (
     <div className="min-h-screen bg-[#f4f6fb] flex">
@@ -326,7 +545,25 @@ export default function AdminDashboard() {
               title={sidebarCollapsed ? label : undefined}
               className={`w-full flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-4 py-2.5 rounded-xl font-semibold text-sm transition-all ${activeTab === key ? "bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white shadow-sm" : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"}`}
             >
-              <Icon size={17} /> {!sidebarCollapsed && label}
+              <Icon size={17} />
+              {!sidebarCollapsed && key !== "analytics" && label}
+              {!sidebarCollapsed && key === "analytics" && (
+                <div className="flex items-center justify-between w-full">
+                  <span>{label}</span>
+                  <div
+                    onClick={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                  >
+                    <AnalyticsLayerTray
+                      open={analyticsTrayOpen}
+                      onOpenChange={setAnalyticsTrayOpen}
+                      activeLayer={analyticsLayer}
+                      onLayerChange={handleAnalyticsLayerChange}
+                      compact
+                    />
+                  </div>
+                </div>
+              )}
             </button>
           ))}
 
@@ -430,11 +667,219 @@ export default function AdminDashboard() {
                 <p className="text-gray-500 text-sm mt-0.5">Manage onboarding and accounts across the platform.</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                <StatCard icon="🎓" value={studentRequests.length} label="Student Requests" />
-                <StatCard icon="👨‍🏫" value={teachers.length} label="Faculty Accounts" />
+                <StatCard icon="🎓" value={overviewLoading ? "…" : (overview?.total_students ?? studentRequests.length)} label="Total Students" />
+                <StatCard icon="👨‍🏫" value={overviewLoading ? "…" : (overview?.total_teachers ?? teachers.length)} label="Total Teachers" />
+                <StatCard icon="📝" value={overviewLoading ? "…" : (overview?.total_exams ?? 0)} label="Total Exams" />
+                <StatCard icon="📊" value={overviewLoading ? "…" : (overview?.total_attempts ?? 0)} label="Total Attempts" />
+                <StatCard icon="🎯" value={overviewLoading ? "…" : (overview?.average_platform_score != null ? `${overview.average_platform_score}%` : "—")} label="Avg Platform Score" />
                 <StatCard icon="🔔" value={studentRequests.length} label="Pending Reviews" />
               </div>
             </>
+          )}
+
+          {activeTab === "analytics" && (
+            <div className="space-y-5">
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-extrabold text-[#1a1a2e]">Platform Analytics</h2>
+                  <p className="text-gray-500 text-sm mt-0.5">Read-only analytics with layered navigation to keep the workspace focused.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div className="bg-white rounded-xl border border-gray-100 px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Students</p>
+                  <p className="text-lg font-bold text-[#1a1a2e] mt-1">{overviewLoading ? "…" : (overview?.total_students ?? analyticsStudents.length)}</p>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-100 px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Teachers</p>
+                  <p className="text-lg font-bold text-[#1a1a2e] mt-1">{overviewLoading ? "…" : (overview?.total_teachers ?? analyticsTeachers.length)}</p>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-100 px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Attempts</p>
+                  <p className="text-lg font-bold text-[#1a1a2e] mt-1">{overviewLoading ? "…" : (overview?.total_attempts ?? 0)}</p>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-100 px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Avg Score</p>
+                  <p className="text-lg font-bold text-[#1a1a2e] mt-1">{overviewLoading ? "…" : (overview?.average_platform_score != null ? `${overview.average_platform_score}%` : "—")}</p>
+                </div>
+              </div>
+
+              {analyticsLayer === "students" && (
+                <>
+                  {studentLayerView === "list" && (
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                      <div className="px-6 py-4 border-b border-gray-100 space-y-3">
+                        <h3 className="font-bold text-[#1a1a2e]">Student Directory</h3>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                          <input
+                            value={analyticsFilters.studentQuery}
+                            onChange={(event) => setAnalyticsFilters((prev) => ({ ...prev, studentQuery: event.target.value }))}
+                            placeholder="Search by student name or email"
+                            className="w-full px-4 py-3 text-sm border border-gray-200 rounded-xl"
+                          />
+                          <input
+                            value={analyticsFilters.studentDepartment}
+                            onChange={(event) => setAnalyticsFilters((prev) => ({ ...prev, studentDepartment: event.target.value }))}
+                            placeholder="Filter by department"
+                            className="w-full px-4 py-3 text-sm border border-gray-200 rounded-xl"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-[62vh] overflow-auto divide-y divide-gray-100">
+                        {analyticsLoading ? (
+                          <LoadingRow text="Loading student analytics…" />
+                        ) : analyticsStudents.length === 0 ? (
+                          <EmptyRow text="No students found." />
+                        ) : (
+                          analyticsStudents.map((item) => (
+                            <button
+                              key={item.student_id}
+                              type="button"
+                              onClick={() => handleSelectAnalyticsStudent(item.student_id)}
+                              className="w-full text-left px-6 py-4 text-sm hover:bg-gray-50"
+                            >
+                              <p className="font-semibold text-[#1a1a2e]">{item.name} <span className="text-gray-400">({item.reg_no || "No Reg"})</span></p>
+                              <p className="text-xs text-gray-500 mt-0.5">{item.department || "—"} · Sem {item.semester || "—"} · Exams {item.exams_taken} · Avg {item.avg_score != null ? `${item.avg_score}%` : "—"}</p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {studentLayerView === "detail" && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={backToStudentDirectory}
+                          className="px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          Back to Student Directory
+                        </button>
+                        {selectedStudent && (
+                          <p className="text-sm text-gray-500">Viewing: <span className="font-semibold text-[#1a1a2e]">{selectedStudent.name}</span></p>
+                        )}
+                      </div>
+                      <StudentAnalyticsDetailPanel
+                        selectedStudent={selectedStudent}
+                        loading={studentHistoryLoading}
+                        historyItems={studentHistoryItems}
+                        filterOptions={studentHistoryFilterOptions}
+                        filters={studentHistoryFilters}
+                        onFilterChange={handleStudentHistoryFilterChange}
+                        onClearFilters={clearStudentHistoryFilters}
+                        behaviourLoading={subjectBehaviourLoading}
+                        behaviourItems={subjectBehaviourItems}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {analyticsLayer === "teachers" && (
+                <>
+                  {teacherLayerView === "list" && (
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                      <div className="px-6 py-4 border-b border-gray-100 space-y-3">
+                        <h3 className="font-bold text-[#1a1a2e]">Teacher Directory</h3>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                          <input
+                            value={analyticsFilters.teacherQuery}
+                            onChange={(event) => setAnalyticsFilters((prev) => ({ ...prev, teacherQuery: event.target.value }))}
+                            placeholder="Search by teacher name or email"
+                            className="w-full px-4 py-3 text-sm border border-gray-200 rounded-xl"
+                          />
+                          <input
+                            value={analyticsFilters.teacherDepartment}
+                            onChange={(event) => setAnalyticsFilters((prev) => ({ ...prev, teacherDepartment: event.target.value }))}
+                            placeholder="Filter by department"
+                            className="w-full px-4 py-3 text-sm border border-gray-200 rounded-xl"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-[62vh] overflow-auto divide-y divide-gray-100">
+                        {analyticsLoading ? (
+                          <LoadingRow text="Loading teacher analytics…" />
+                        ) : analyticsTeachers.length === 0 ? (
+                          <EmptyRow text="No teachers found." />
+                        ) : (
+                          analyticsTeachers.map((item) => (
+                            <button
+                              key={item.teacher_id}
+                              type="button"
+                              onClick={() => handleSelectAnalyticsTeacher(item.teacher_id)}
+                              className="w-full text-left px-6 py-4 text-sm hover:bg-gray-50"
+                            >
+                              <p className="font-semibold text-[#1a1a2e]">{item.name}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">{item.department || "—"} · Exams {item.exams_created} · Attempts {item.total_attempts} · Avg {item.avg_score != null ? `${item.avg_score}%` : "—"}</p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {teacherLayerView === "detail" && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={backToTeacherDirectory}
+                          className="px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50"
+                        >
+                          Back to Teacher Directory
+                        </button>
+                        {selectedTeacher && (
+                          <p className="text-sm text-gray-500">Viewing: <span className="font-semibold text-[#1a1a2e]">{selectedTeacher.name}</span></p>
+                        )}
+                      </div>
+                      <TeacherAnalyticsDetailPanel
+                        selectedTeacher={selectedTeacher}
+                        loading={teacherExamLoading}
+                        data={teacherExamData}
+                        subjectFilter={teacherExamSubject}
+                        onSubjectFilterChange={setTeacherExamSubject}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {analyticsLayer === "failure" && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-100">
+                    <h3 className="font-bold text-[#1a1a2e]">Failure Rate Monitoring</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Exams above 70% failure are flagged for review.</p>
+                  </div>
+                  <div className="max-h-[58vh] overflow-auto divide-y divide-gray-100">
+                    {analyticsLoading ? (
+                      <LoadingRow text="Loading failure monitoring…" />
+                    ) : failureRates.length === 0 ? (
+                      <EmptyRow text="No exam data available." />
+                    ) : (
+                      failureRates.map((item) => (
+                        <div key={item.assessment_id} className="px-6 py-3 flex items-center justify-between gap-4 text-sm">
+                          <div className="min-w-0">
+                            <div className="grid grid-cols-2 gap-2 max-w-md">
+                              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Title</p>
+                              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Subject</p>
+                              <p className="font-semibold text-[#1a1a2e] truncate">{item.exam}</p>
+                              <p className="font-semibold text-[#1a1a2e] truncate">{item.subject || "—"}</p>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">{item.teacher} · Attempts {item.attempts}</p>
+                          </div>
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${item.flagged ? "bg-red-100 text-red-700 border-red-200" : "bg-emerald-100 text-emerald-700 border-emerald-200"}`}>
+                            {item.failure_rate}%
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {activeTab === "profile" && (
