@@ -2,9 +2,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.assessment import Assessment
 from app.models.attempt import Attempt
+from app.models.attempt_feature import AttemptFeature
 from app.models.user import User
 from app.models.activity_log import TeacherActivityLog
 from app.schemas.assessment import AssessmentCreate, AssessmentUpdate, TeacherActivityLogCreate
+from app.services.display_code_service import generate_next_display_code
+from app.ml.supervised.decision_tree.decision_tree_behavior import (
+    predict_single_feature_row as predict_supervised_feature_row,
+)
 from uuid import UUID
 from datetime import datetime, timezone
 
@@ -22,6 +27,7 @@ def _serialize(a: Assessment, db: Session) -> dict:
     q_count = db.query(Question).filter(Question.assessment_id == a.id).count()
     return {
         "id": str(a.id),
+        "assessment_code": a.assessment_code,
         "title": a.title,
         "subject": a.subject,
         "duration_minutes": a.duration_minutes,
@@ -144,6 +150,7 @@ def create_assessment(db: Session, data: AssessmentCreate, teacher_id: UUID):
 
     max_order = db.query(Assessment).filter(Assessment.created_by == teacher_id).count()
     assessment = Assessment(
+        assessment_code=generate_next_display_code(db, Assessment, "assessment_code", "EX", 6),
         title=data.title,
         subject=data.subject,
         duration_minutes=data.duration_minutes,
@@ -227,6 +234,34 @@ def reorder_assessments(db: Session, ids: list, teacher_id: UUID):
     return True
 
 
+def _predict_supervised_class(feature: AttemptFeature):
+    if feature is None:
+        return None, None
+
+    feature_row = {
+        "avg_time": float(feature.avg_time or 0.0),
+        "time_variance": float(feature.time_variance or 0.0),
+        "revision_count": float(feature.revision_count or 0.0),
+        "wr_ratio": float(feature.wr_ratio or 0.0),
+        "rw_ratio": float(feature.rw_ratio or 0.0),
+        "navigation_count": float(feature.navigation_count or 0.0),
+        "rte_score": float(feature.rte_score or 0.0),
+        "accuracy": float(feature.accuracy or 0.0),
+    }
+
+    try:
+        prediction = predict_supervised_feature_row(feature_row)
+        predicted_label = prediction.get("predicted_label")
+        confidence = prediction.get("confidence")
+        return (
+            str(predicted_label) if predicted_label is not None else None,
+            float(confidence) if confidence is not None else None,
+        )
+    except Exception:
+        # Return nulls when model artifacts are not available.
+        return None, None
+
+
 def get_assessment_attempts(db: Session, assessment_id: str, teacher_id: UUID):
     assessment = get_assessment_by_id(db, assessment_id, teacher_id)
     if not assessment:
@@ -240,8 +275,11 @@ def get_assessment_attempts(db: Session, assessment_id: str, teacher_id: UUID):
     result = []
     for att in attempts:
         student = db.query(User).filter(User.id == att.student_id).first()
+        feature = db.query(AttemptFeature).filter(AttemptFeature.attempt_id == att.id).first()
+        supervised_class, supervised_confidence = _predict_supervised_class(feature)
         result.append({
             "id": str(att.id),
+            "attempt_code": att.attempt_code,
             "assessment_id": str(att.assessment_id),
             "student_id": str(att.student_id),
             "student_name": student.name if student else "Unknown",
@@ -249,5 +287,14 @@ def get_assessment_attempts(db: Session, assessment_id: str, teacher_id: UUID):
             "started_at": att.started_at.isoformat() if att.started_at else None,
             "submitted_at": att.submitted_at.isoformat() if att.submitted_at else None,
             "score": att.score,
+            "avg_time_sec": float(feature.avg_time) if feature else None,
+            "revisions": int(feature.revision_count) if feature else None,
+            "navigation_jumps": int(feature.navigation_count) if feature else None,
+            "behavior": feature.behavior_label if feature else None,
+            "label_source": feature.label_source if feature else None,
+            "supervised_class": supervised_class,
+            "supervised_confidence": supervised_confidence,
+            "unsupervised_cluster": int(feature.unsupervised_cluster) if feature and feature.unsupervised_cluster is not None else None,
+            "unsupervised_distance": float(feature.unsupervised_distance) if feature and feature.unsupervised_distance is not None else None,
         })
     return result

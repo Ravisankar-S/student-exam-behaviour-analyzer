@@ -16,6 +16,7 @@ class AdmissionRequest(Base):
     __tablename__ = "admission_requests"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_code = Column(String(16), unique=True, index=True, nullable=True)
     student_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     student_name = Column(String, nullable=False)
     student_email = Column(String, nullable=False)

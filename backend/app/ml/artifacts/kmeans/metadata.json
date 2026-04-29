@@ -1,0 +1,18 @@
+{
+  "feature_columns": [
+    "avg_time",
+    "time_variance",
+    "revision_count",
+    "navigation_count",
+    "accuracy",
+    "rte_score"
+  ],
+  "metrics": {
+    "rows": 372,
+    "n_clusters": 4,
+    "inertia": 520.3494535964678,
+    "silhouette_score": 0.5861647225999849
+  },
+  "label_column": "behavioural_label",
+  "training_csv": "train_data\\raw\\user_data_v2.csv"
+}

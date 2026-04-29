@@ -204,10 +204,49 @@ def list_students(
             "name": student.name,
             "email": student.email,
             "reg_no": student.student_profile.reg_no if student.student_profile else None,
+            "college_email": student.student_profile.college_email if student.student_profile else None,
+            "department": student.student_profile.department if student.student_profile else None,
+            "division": student.student_profile.division if student.student_profile else None,
+            "class_roll_no": student.student_profile.class_roll_no if student.student_profile else None,
+            "semester": student.student_profile.semester if student.student_profile else None,
+            "year_of_joining": student.student_profile.year_of_joining if student.student_profile else None,
+            "profile_picture_path": student.profile_picture_path,
             "created_at": _to_utc_iso(student.created_at),
         }
         for student in students
     ]
+
+
+@router.get("/students/{student_user_id}/profile")
+def get_student_profile_for_teacher(
+    student_user_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_teacher_or_admin),
+):
+    student = db.query(User).filter(
+        User.id == student_user_id,
+        User.role == RoleEnum.student,
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == student.id).first()
+    return {
+        "id": str(student.id),
+        "name": student.name,
+        "email": student.email,
+        "profile_picture_path": student.profile_picture_path,
+        "student_profile": _serialize_student_profile(profile) if profile else {
+            "user_id": str(student.id),
+            "reg_no": None,
+            "college_email": None,
+            "department": None,
+            "division": None,
+            "class_roll_no": None,
+            "semester": None,
+            "year_of_joining": None,
+        },
+    }
 
 
 @router.get("/teachers")
@@ -306,6 +345,7 @@ def create_teacher_account(
 def _serialize_admission_request(request: AdmissionRequest):
     return {
         "id": str(request.id),
+        "request_code": request.request_code,
         "student_user_id": str(request.student_user_id),
         "student_name": request.student_name,
         "student_email": request.student_email,

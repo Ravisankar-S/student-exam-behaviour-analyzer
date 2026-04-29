@@ -1,6 +1,8 @@
 #Project SRS and SDD files
 Docs/
 CLAUDE.md
+tasks.md
+backend/app/ml/README.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -212,3 +214,7 @@ __marimo__/
 
 # Local uploads (must never be committed)
 uploads/
+
+# Training data (large datasets)
+train_data/
+backend/train_data/

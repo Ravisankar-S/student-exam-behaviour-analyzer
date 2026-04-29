@@ -17,10 +17,14 @@ from app.services.assessment_service import (
 from app.api.deps import get_db, get_current_user
 from app.models.user import User, RoleEnum
 from app.models.attempt import Attempt
+from app.models.event_log import EventLog
 from app.models.assessment import Assessment
 from app.models.question import Question
 from datetime import datetime, timezone
+from collections import defaultdict
 from typing import Optional
+from app.services.attempt_feature_service import compute_and_store_attempt_features
+from app.services.display_code_service import generate_next_display_code, get_next_display_counter, format_display_code
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
 
@@ -50,6 +54,7 @@ def _serialize_published_assessment(a: Assessment, db: Session):
     q_count = db.query(Question).filter(Question.assessment_id == a.id).count()
     return {
         "id": str(a.id),
+        "assessment_code": a.assessment_code,
         "title": a.title,
         "subject": a.subject,
         "duration_minutes": a.duration_minutes,
@@ -191,6 +196,8 @@ def submit_student_attempt(
     expected_ids = {str(question.id) for question in questions}
     if len(data.responses) != len(expected_ids):
         raise HTTPException(status_code=400, detail="All questions must be answered or skipped")
+    if not data.events:
+        raise HTTPException(status_code=400, detail="Interaction events are required for attempt submission")
 
     seen_ids = set()
     attempted_count = 0
@@ -226,6 +233,7 @@ def submit_student_attempt(
     submitted_at = data.submitted_at or datetime.utcnow()
 
     attempt = Attempt(
+        attempt_code=generate_next_display_code(db, Attempt, "attempt_code", "A", 6),
         assessment_id=assessment.id,
         student_id=current_user.id,
         started_at=started_at,
@@ -233,17 +241,63 @@ def submit_student_attempt(
         score=score,
     )
     db.add(attempt)
+    db.flush()
+
+    visit_tracker: dict[str, int] = defaultdict(int)
+    event_models: list[EventLog] = []
+    next_event_counter = get_next_display_counter(db, EventLog, "event_code", "E")
+    for event in data.events:
+        if event.question_id not in expected_ids:
+            raise HTTPException(status_code=400, detail="Invalid question in event log")
+        if event.time_spent_sec < 0:
+            raise HTTPException(status_code=400, detail="time_spent_sec cannot be negative")
+
+        previous_visit = visit_tracker[event.question_id]
+        if event.visit_index < previous_visit:
+            raise HTTPException(status_code=400, detail="visit_index must be non-decreasing per question")
+        visit_tracker[event.question_id] = event.visit_index
+
+        selected_option = event.selected_option.upper() if event.selected_option else None
+        event_models.append(
+            EventLog(
+                event_code=format_display_code("E", next_event_counter, 6),
+                attempt_id=attempt.id,
+                student_id=current_user.id,
+                question_id=event.question_id,
+                timestamp=event.timestamp,
+                time_spent_sec=event.time_spent_sec,
+                selected_option=selected_option,
+                answer_changed=event.answer_changed,
+                visit_index=event.visit_index,
+            )
+        )
+        next_event_counter += 1
+
+    db.add_all(event_models)
+
+    feature_row = compute_and_store_attempt_features(
+        db=db,
+        attempt=attempt,
+        assessment=assessment,
+        questions=questions,
+        event_logs=event_models,
+        correct_count=correct_count,
+    )
+
     db.commit()
     db.refresh(attempt)
 
     return {
         "attempt_id": str(attempt.id),
+        "attempt_code": attempt.attempt_code,
         "assessment_id": str(assessment.id),
         "total_questions": len(questions),
         "attempted": attempted_count,
         "skipped": skipped_count,
         "correct": correct_count,
         "score": score,
+        "events_logged": len(event_models),
+        "behavior_label": feature_row.behavior_label,
         "message": "Attempt submitted successfully",
     }
 

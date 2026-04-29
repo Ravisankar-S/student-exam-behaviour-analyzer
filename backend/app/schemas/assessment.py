@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from pydantic import Field
 from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
@@ -48,8 +49,18 @@ class StudentAttemptResponseItem(BaseModel):
     skipped: bool = False
 
 
+class StudentAttemptEventItem(BaseModel):
+    question_id: str
+    timestamp: datetime
+    time_spent_sec: float = Field(ge=0)
+    selected_option: Optional[str] = Field(default=None, pattern="^[A-D]$")
+    answer_changed: bool = False
+    visit_index: int = Field(ge=1)
+
+
 class StudentAttemptSubmitRequest(BaseModel):
     responses: List[StudentAttemptResponseItem]
+    events: List[StudentAttemptEventItem] = Field(default_factory=list)
     started_at: Optional[datetime] = None
     submitted_at: Optional[datetime] = None
 

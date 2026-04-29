@@ -10,6 +10,7 @@ class Assessment(Base):
     __tablename__ = "assessments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assessment_code = Column(String(16), unique=True, index=True, nullable=True)
     title = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     duration_minutes = Column(Integer, nullable=False, default=60)

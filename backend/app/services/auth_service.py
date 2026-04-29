@@ -3,6 +3,7 @@ from typing import Optional
 from app.models.user import User, AuthProviderEnum, RoleEnum
 from app.models.student_profile import StudentProfile
 from app.models.admission_request import AdmissionRequest, AdmissionStatusEnum
+from app.services.display_code_service import generate_next_display_code
 from app.core.security import hash_password, verify_password, create_access_token
 import uuid
 
@@ -62,6 +63,7 @@ def register_user(
         )
         db.add(profile)
         request = AdmissionRequest(
+            request_code=generate_next_display_code(db, AdmissionRequest, "request_code", "RQ", 6),
             student_user_id=user.id,
             student_name=name,
             student_email=email,

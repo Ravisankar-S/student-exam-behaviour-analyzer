@@ -32,6 +32,13 @@ export const getStudents = (token, q = "") =>
     },
   })
 
+export const getStudentProfileById = (token, studentId) =>
+  API.get(`/auth/students/${studentId}/profile`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+
 export const getTeachers = (token, q = "") =>
   API.get(`/auth/teachers${q ? `?q=${encodeURIComponent(q)}` : ""}`, {
     headers: {

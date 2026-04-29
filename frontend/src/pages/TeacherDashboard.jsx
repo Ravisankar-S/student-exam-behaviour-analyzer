@@ -27,27 +27,12 @@ import {
   deleteProfilePicture,
 } from "../api/auth"
 import ChangePasswordModal from "../components/ChangePasswordModal"
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ScatterChart,
-  Scatter,
-} from "recharts"
 import Avatar from "../components/dashboard/DashboardAvatar"
 import ImagePreviewModal from "../components/dashboard/ImagePreviewModal"
 import ProfileIdCard from "../components/dashboard/ProfileIdCard"
 import ProfileDetailsSection from "../components/dashboard/ProfileDetailsSection"
+import ExamWiseAnalyticsTab from "../components/teacher/analytics/ExamWiseAnalyticsTab"
+import StudentWiseAnalyticsTab from "../components/teacher/analytics/StudentWiseAnalyticsTab"
 
 // ── Subject colour palette ───────────────────
 const SUBJECT_COLORS = [
@@ -129,55 +114,6 @@ function getStatusTransitionAction(prevStatus, nextStatus) {
   return `status changed: ${prevStatus} → ${nextStatus}`
 }
 
-const BEHAVIOR_LABELS = ["Fast_Response", "High_Revision", "Deliberative", "Disengaged"]
-
-function hashText(text = "") {
-  let hash = 0
-  for (let i = 0; i < text.length; i += 1) {
-    hash = ((hash << 5) - hash) + text.charCodeAt(i)
-    hash |= 0
-  }
-  return Math.abs(hash)
-}
-
-function durationMinutesFromAttempt(attempt, fallbackDuration = 60) {
-  if (attempt?.started_at && attempt?.submitted_at) {
-    const ms = new Date(attempt.submitted_at).getTime() - new Date(attempt.started_at).getTime()
-    if (ms > 0) return ms / 60000
-  }
-  return fallbackDuration * 0.72
-}
-
-function enrichAttemptDummy(attempt, fallbackDuration = 60) {
-  const seed = hashText(`${attempt.id}-${attempt.student_id}-${attempt.score ?? 0}`)
-  const behavior = BEHAVIOR_LABELS[seed % BEHAVIOR_LABELS.length]
-  const durationMin = durationMinutesFromAttempt(attempt, fallbackDuration)
-  const avgTimeSec = Math.max(8, Math.round((durationMin * 60) / (8 + (seed % 8))))
-  const revisions = behavior === "High_Revision"
-    ? 4 + (seed % 5)
-    : behavior === "Deliberative"
-      ? 2 + (seed % 3)
-      : behavior === "Disengaged"
-        ? 1 + (seed % 2)
-        : seed % 2
-  const navigationJumps = behavior === "Disengaged"
-    ? 6 + (seed % 6)
-    : behavior === "High_Revision"
-      ? 4 + (seed % 4)
-      : 1 + (seed % 4)
-  const anomaly = (attempt.score ?? 0) < 25 || navigationJumps >= 9 || (attempt.score ?? 0) > 95 && durationMin < 8
-
-  return {
-    ...attempt,
-    behavior,
-    avg_time_sec: avgTimeSec,
-    revisions,
-    navigation_jumps: navigationJumps,
-    duration_min: durationMin,
-    anomaly,
-  }
-}
-
 // ─────────────────────────────────────────────
 // Main Page
 // ─────────────────────────────────────────────
@@ -200,11 +136,9 @@ export default function TeacherDashboard() {
   const [toast, setToast]                 = useState(null)
   const [formLoading, setFormLoading]     = useState(false)
   const [analyticsTab, setAnalyticsTab]   = useState("exam")
-  const [selectedExamAnalytics, setSelectedExamAnalytics] = useState(null)
   const [examAttemptsMap, setExamAttemptsMap] = useState({})
   const [students, setStudents] = useState([])
   const [selectedStudentId, setSelectedStudentId] = useState(null)
-  const [studentFilters, setStudentFilters] = useState({ query: "", behavior: "all", participation: "all" })
   const [loadingAnalytics, setLoadingAnalytics] = useState(false)
   const [reorderMode, setReorderMode]     = useState(false)
   const [examFilters, setExamFilters]     = useState({
@@ -526,7 +460,7 @@ export default function TeacherDashboard() {
       const attemptsEntries = await Promise.all(
         exams.map(async (exam) => {
           const res = await getAssessmentAttempts(token, exam.id)
-          return [exam.id, (res.data || []).map((attempt) => enrichAttemptDummy(attempt, exam.duration_minutes))]
+          return [exam.id, res.data || []]
         })
       )
       setExamAttemptsMap(Object.fromEntries(attemptsEntries))
@@ -647,74 +581,12 @@ export default function TeacherDashboard() {
       ...attempt,
       exam_id: exam.id,
       exam_title: exam.title,
+      exam_subject: exam.subject,
       exam_duration: exam.duration_minutes,
+      exam_available_from: exam.available_from,
+      exam_created_at: exam.created_at,
     }))
   )
-  const studentStatsMap = allTeacherAttempts.reduce((acc, attempt) => {
-    const key = attempt.student_id
-    if (!acc[key]) {
-      acc[key] = {
-        tests: 0,
-        totalScore: 0,
-        totalTime: 0,
-        totalRevisions: 0,
-        totalJumps: 0,
-        behaviorCounts: {},
-      }
-    }
-    acc[key].tests += 1
-    acc[key].totalScore += (attempt.score || 0)
-    acc[key].totalTime += (attempt.avg_time_sec || 0)
-    acc[key].totalRevisions += (attempt.revisions || 0)
-    acc[key].totalJumps += (attempt.navigation_jumps || 0)
-    acc[key].behaviorCounts[attempt.behavior] = (acc[key].behaviorCounts[attempt.behavior] || 0) + 1
-    return acc
-  }, {})
-
-  const studentRows = students.map((student) => {
-    const stats = studentStatsMap[student.id]
-    if (!stats) {
-      return {
-        ...student,
-        tests: 0,
-        avgScore: 0,
-        avgTime: 0,
-        avgRevisions: 0,
-        avgJumps: 0,
-        behavior: "N/A",
-      }
-    }
-    const behavior = Object.entries(stats.behaviorCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "N/A"
-    return {
-      ...student,
-      tests: stats.tests,
-      avgScore: Math.round(stats.totalScore / stats.tests),
-      avgTime: Math.round(stats.totalTime / stats.tests),
-      avgRevisions: Number((stats.totalRevisions / stats.tests).toFixed(1)),
-      avgJumps: Number((stats.totalJumps / stats.tests).toFixed(1)),
-      behavior,
-    }
-  })
-
-  const filteredStudentRows = studentRows.filter((row) => {
-    const query = studentFilters.query.trim().toLowerCase()
-    const byQuery = !query
-      || row.name.toLowerCase().includes(query)
-      || row.email.toLowerCase().includes(query)
-    const byBehavior = studentFilters.behavior === "all" || row.behavior === studentFilters.behavior
-    const byParticipation = studentFilters.participation === "all"
-      || (studentFilters.participation === "attempted" && row.tests > 0)
-      || (studentFilters.participation === "not_attempted" && row.tests === 0)
-    return byQuery && byBehavior && byParticipation
-  })
-
-  const selectedStudent = filteredStudentRows.find((s) => s.id === selectedStudentId)
-    || studentRows.find((s) => s.id === selectedStudentId)
-    || null
-
-  const selectedStudentAttempts = selectedStudent
-    ? allTeacherAttempts.filter((attempt) => attempt.student_id === selectedStudent.id)
-    : []
 
   const navItems = [
     { key: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
@@ -727,7 +599,6 @@ export default function TeacherDashboard() {
     setActiveTab(key)
     if (key !== "exams") setReorderMode(false)
     if (key !== "analytics") {
-      setSelectedExamAnalytics(null)
       setSelectedStudentId(null)
     }
     setSidebarOpen(false)
@@ -741,89 +612,6 @@ export default function TeacherDashboard() {
     onManualCloseToggle: handleManualCloseToggle,
     onSchedule: openScheduleModal,
     onQuestions: (id) => navigate(`/dashboard/teacher/exam/${id}/questions`),
-  }
-
-  function buildExamAnalytics(exam) {
-    if (!exam) return null
-    const attempts = examAttemptsMap[exam.id] || []
-    const totalAttemptsCount = attempts.length
-    const uniqueStudents = new Set(attempts.map((a) => a.student_id)).size
-    const avgScore = totalAttemptsCount ? Math.round(attempts.reduce((sum, a) => sum + (a.score || 0), 0) / totalAttemptsCount) : 0
-    const completionRate = totalAttemptsCount
-      ? Math.round((attempts.filter((a) => !!a.submitted_at).length / totalAttemptsCount) * 100)
-      : 0
-    const avgTimeTakenSec = totalAttemptsCount
-      ? Math.round(attempts.reduce((sum, a) => sum + (a.avg_time_sec || 0), 0) / totalAttemptsCount)
-      : 0
-    const anomalyFlags = attempts.filter((a) => a.anomaly).length
-
-    const behaviorDistribution = BEHAVIOR_LABELS.map((label) => ({
-      label,
-      value: attempts.filter((a) => a.behavior === label).length,
-    }))
-
-    const questionCount = Math.max(exam.question_count || 0, 8)
-    const spikeQuestion = (hashText(exam.id) % questionCount) + 1
-    const timePerQuestion = Array.from({ length: questionCount }).map((_, idx) => {
-      const qNo = idx + 1
-      const base = 22 + ((hashText(`${exam.id}-${qNo}`) % 13))
-      const spikeBoost = qNo === spikeQuestion ? 35 : 0
-      return { question: `Q${qNo}`, avg_time_sec: base + spikeBoost }
-    })
-
-    const revisionFrequency = [
-      { range: "0", value: attempts.filter((a) => (a.revisions || 0) === 0).length },
-      { range: "1-2", value: attempts.filter((a) => (a.revisions || 0) >= 1 && (a.revisions || 0) <= 2).length },
-      { range: "3-5", value: attempts.filter((a) => (a.revisions || 0) >= 3 && (a.revisions || 0) <= 5).length },
-      { range: ">5", value: attempts.filter((a) => (a.revisions || 0) > 5).length },
-    ]
-
-    const navigationPattern = [
-      { band: "Low (0-2)", value: attempts.filter((a) => (a.navigation_jumps || 0) <= 2).length },
-      { band: "Medium (3-5)", value: attempts.filter((a) => (a.navigation_jumps || 0) >= 3 && (a.navigation_jumps || 0) <= 5).length },
-      { band: "High (6+)", value: attempts.filter((a) => (a.navigation_jumps || 0) >= 6).length },
-    ]
-
-    const scoreDistribution = [
-      { range: "0-20", value: attempts.filter((a) => (a.score || 0) <= 20).length },
-      { range: "21-40", value: attempts.filter((a) => (a.score || 0) >= 21 && (a.score || 0) <= 40).length },
-      { range: "41-60", value: attempts.filter((a) => (a.score || 0) >= 41 && (a.score || 0) <= 60).length },
-      { range: "61-80", value: attempts.filter((a) => (a.score || 0) >= 61 && (a.score || 0) <= 80).length },
-      { range: "81-100", value: attempts.filter((a) => (a.score || 0) >= 81).length },
-    ]
-
-    const studentTable = attempts
-      .map((attempt) => ({
-        studentName: attempt.student_name || "Unknown",
-        studentEmail: attempt.student_email || "",
-        score: Math.round(attempt.score || 0),
-        avgTime: attempt.avg_time_sec || 0,
-        revisions: attempt.revisions || 0,
-        behavior: attempt.behavior,
-      }))
-      .sort((a, b) => b.score - a.score)
-
-    const scatterData = attempts.map((attempt) => ({
-      avgTime: attempt.avg_time_sec || 0,
-      accuracy: Math.round(attempt.score || 0),
-      anomaly: !!attempt.anomaly,
-    }))
-
-    return {
-      totalAttemptsCount,
-      uniqueStudents,
-      avgScore,
-      completionRate,
-      avgTimeTakenSec,
-      anomalyFlags,
-      behaviorDistribution,
-      timePerQuestion,
-      revisionFrequency,
-      navigationPattern,
-      scoreDistribution,
-      studentTable,
-      scatterData,
-    }
   }
 
   return (
@@ -1103,345 +891,46 @@ export default function TeacherDashboard() {
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
                   <h2 className="text-2xl font-extrabold text-[#1a1a2e]">Analytics</h2>
-                  <p className="text-gray-500 text-sm mt-0.5">Exam performance + behavior analytics (demo scaffold).</p>
+                  <p className="text-gray-500 text-sm mt-0.5">Model-backed teacher analysis with Exam Wise and Student Wise drill-downs.</p>
                 </div>
                 <div className="inline-flex bg-white border border-gray-200 rounded-xl p-1">
                   <button
                     onClick={() => { setAnalyticsTab("exam"); setSelectedStudentId(null) }}
                     className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${analyticsTab === "exam" ? "bg-[#1a1a2e] text-white" : "text-gray-600 hover:bg-gray-50"}`}
                   >
-                    Exam Analytics
+                    Exam Wise
                   </button>
                   <button
-                    onClick={() => { setAnalyticsTab("student"); setSelectedExamAnalytics(null) }}
+                    onClick={() => { setAnalyticsTab("student") }}
                     className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${analyticsTab === "student" ? "bg-[#1a1a2e] text-white" : "text-gray-600 hover:bg-gray-50"}`}
                   >
-                    Student Analytics
+                    Student Wise
                   </button>
                 </div>
               </div>
 
-              {loadingAnalytics ? (
+              {analyticsTab === "exam" ? (
+                <ExamWiseAnalyticsTab
+                  exams={exams}
+                  examAttemptsMap={examAttemptsMap}
+                  loading={loadingAnalytics}
+                  onStudentNavigate={(studentId) => {
+                    setSelectedStudentId(studentId)
+                    setAnalyticsTab("student")
+                  }}
+                />
+              ) : loadingAnalytics ? (
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-gray-400 text-sm text-center">Loading analytics…</div>
-              ) : analyticsTab === "exam" ? (
-                selectedExamAnalytics ? (
-                  (() => {
-                    const exam = exams.find((e) => e.id === selectedExamAnalytics)
-                    const analytics = buildExamAnalytics(exam)
-                    if (!exam || !analytics) {
-                      return <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-sm text-gray-500">Exam analytics unavailable.</div>
-                    }
-                    return (
-                      <div className="space-y-6">
-                        <div className="flex items-center justify-between gap-3 flex-wrap">
-                          <div>
-                            <h3 className="text-xl font-extrabold text-[#1a1a2e]">{exam.title}</h3>
-                            <p className="text-sm text-gray-500">{exam.subject} · {exam.duration_minutes} min · {analytics.totalAttemptsCount} attempts</p>
-                          </div>
-                          <button
-                            onClick={() => setSelectedExamAnalytics(null)}
-                            className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50"
-                          >
-                            Back to Exam Cards
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                          <StatCard icon="👥" value={analytics.uniqueStudents} label="Students Attempted" gradient="from-blue-400 to-blue-600" className="!p-4" />
-                          <StatCard icon="🎯" value={`${analytics.avgScore}%`} label="Average Score" gradient="from-emerald-400 to-emerald-600" className="!p-4" />
-                          <StatCard icon="✅" value={`${analytics.completionRate}%`} label="Completion Rate" gradient="from-violet-400 to-violet-600" className="!p-4" />
-                          <StatCard icon="⏱️" value={`${analytics.avgTimeTakenSec}s`} label="Avg Time" gradient="from-amber-400 to-amber-600" className="!p-4" />
-                          <StatCard icon="🚩" value={analytics.anomalyFlags} label="Anomaly Flags" gradient="from-rose-400 to-rose-600" className="!p-4" />
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                          <ChartCard title="Behavior Classification Distribution">
-                            <ResponsiveContainer width="100%" height={280}>
-                              <PieChart>
-                                <Pie data={analytics.behaviorDistribution} dataKey="value" nameKey="label" outerRadius={90}>
-                                  {analytics.behaviorDistribution.map((entry) => (
-                                    <Cell key={entry.label} fill={entry.label === "Fast_Response" ? "#10b981" : entry.label === "High_Revision" ? "#f59e0b" : entry.label === "Deliberative" ? "#3b82f6" : "#ef4444"} />
-                                  ))}
-                                </Pie>
-                                <Tooltip />
-                                <Legend />
-                              </PieChart>
-                            </ResponsiveContainer>
-                          </ChartCard>
-
-                          <ChartCard title="Time Spent per Question">
-                            <ResponsiveContainer width="100%" height={280}>
-                              <LineChart data={analytics.timePerQuestion}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                <XAxis dataKey="question" />
-                                <YAxis />
-                                <Tooltip />
-                                <Line type="monotone" dataKey="avg_time_sec" stroke="#ff4b2b" strokeWidth={2.5} dot={{ r: 3 }} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </ChartCard>
-
-                          <ChartCard title="Revision Frequency">
-                            <ResponsiveContainer width="100%" height={260}>
-                              <BarChart data={analytics.revisionFrequency}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                <XAxis dataKey="range" />
-                                <YAxis allowDecimals={false} />
-                                <Tooltip />
-                                <Bar dataKey="value" fill="#6366f1" radius={[8, 8, 0, 0]} />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </ChartCard>
-
-                          <ChartCard title="Navigation Patterns">
-                            <ResponsiveContainer width="100%" height={260}>
-                              <BarChart data={analytics.navigationPattern}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                <XAxis dataKey="band" />
-                                <YAxis allowDecimals={false} />
-                                <Tooltip />
-                                <Bar dataKey="value" fill="#14b8a6" radius={[8, 8, 0, 0]} />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </ChartCard>
-
-                          <ChartCard title="Score Distribution">
-                            <ResponsiveContainer width="100%" height={260}>
-                              <BarChart data={analytics.scoreDistribution}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                <XAxis dataKey="range" />
-                                <YAxis allowDecimals={false} />
-                                <Tooltip />
-                                <Bar dataKey="value" fill="#f97316" radius={[8, 8, 0, 0]} />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </ChartCard>
-
-                          <ChartCard title="Anomaly Detection (Dummy Scatter)">
-                            <ResponsiveContainer width="100%" height={260}>
-                              <ScatterChart>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                <XAxis type="number" dataKey="avgTime" name="Average Time" unit="s" />
-                                <YAxis type="number" dataKey="accuracy" name="Accuracy" unit="%" />
-                                <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                                <Scatter name="Attempts" data={analytics.scatterData} fill="#3b82f6" />
-                              </ScatterChart>
-                            </ResponsiveContainer>
-                          </ChartCard>
-                        </div>
-
-                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                          <div className="px-5 py-4 border-b border-gray-100">
-                            <h4 className="font-bold text-[#1a1a2e]">Student Behavior Table</h4>
-                          </div>
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                              <thead className="bg-gray-50 text-gray-500">
-                                <tr>
-                                  <th className="text-left px-4 py-3 font-semibold">Student</th>
-                                  <th className="text-left px-4 py-3 font-semibold">Score</th>
-                                  <th className="text-left px-4 py-3 font-semibold">Avg Time</th>
-                                  <th className="text-left px-4 py-3 font-semibold">Revisions</th>
-                                  <th className="text-left px-4 py-3 font-semibold">Behavior Label</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {analytics.studentTable.map((row, idx) => (
-                                  <tr key={`${row.studentEmail}-${idx}`} className="border-t border-gray-100">
-                                    <td className="px-4 py-3">
-                                      <p className="font-semibold text-[#1a1a2e]">{row.studentName}</p>
-                                      <p className="text-xs text-gray-400">{row.studentEmail}</p>
-                                    </td>
-                                    <td className="px-4 py-3 text-[#1a1a2e] font-semibold">{row.score}%</td>
-                                    <td className="px-4 py-3 text-gray-600">{row.avgTime}s</td>
-                                    <td className="px-4 py-3 text-gray-600">{row.revisions}</td>
-                                    <td className="px-4 py-3">
-                                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700">{row.behavior}</span>
-                                    </td>
-                                  </tr>
-                                ))}
-                                {analytics.studentTable.length === 0 && (
-                                  <tr>
-                                    <td className="px-4 py-6 text-gray-400" colSpan={5}>No attempts available for this exam.</td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })()
-                ) : (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {exams.map((exam) => {
-                        const quick = buildExamAnalytics(exam)
-                        const dominantBehavior = quick?.behaviorDistribution
-                          ?.slice()
-                          .sort((a, b) => b.value - a.value)?.[0]?.label || "N/A"
-
-                        return (
-                          <div key={exam.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
-                            <div className="grid grid-cols-2 gap-3 rounded-xl border border-gray-100 p-3 bg-gray-50/60">
-                              <div>
-                                <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Title</p>
-                                <p className="font-semibold text-[#1a1a2e] text-sm mt-0.5 line-clamp-2">{exam.title}</p>
-                              </div>
-                              <div>
-                                <p className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">Subject</p>
-                                <p className="font-semibold text-[#1a1a2e] text-sm mt-0.5 line-clamp-2">{exam.subject}</p>
-                              </div>
-                            </div>
-                            <div>
-                              <p className="text-sm text-gray-500 mt-1">{exam.duration_minutes} min · {exam.question_count || 0} questions · {exam.attempt_count || 0} attempts</p>
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700">
-                                Attempts: {quick?.totalAttemptsCount || 0}
-                              </span>
-                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700">
-                                Behavior: {dominantBehavior}
-                              </span>
-                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700">
-                                Anomalies: {quick?.anomalyFlags || 0}
-                              </span>
-                            </div>
-
-                            <button
-                              onClick={() => setSelectedExamAnalytics(exam.id)}
-                              className="w-full py-2.5 rounded-xl text-sm font-semibold bg-[#1a1a2e] text-white hover:bg-[#2a2a46]"
-                            >
-                              View Analytics
-                            </button>
-                          </div>
-                        )
-                      })}
-                      {exams.length === 0 && (
-                        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-gray-500 text-sm">Create an exam first to view analytics.</div>
-                      )}
-                    </div>
-
-                    {exams.length > 0 && (
-                      <div className="bg-white rounded-xl border border-gray-100 px-4 py-3 text-xs text-gray-600 flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-gray-700 mr-1">Behavior Legend:</span>
-                        <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 font-semibold">Fast_Response</span>
-                        <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700 font-semibold">High_Revision</span>
-                        <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 font-semibold">Deliberative</span>
-                        <span className="px-2 py-1 rounded-full bg-rose-50 text-rose-700 font-semibold">Disengaged</span>
-                      </div>
-                    )}
-                  </div>
-                )
               ) : (
-                <div className="space-y-4">
-                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <Field
-                        label="Search Student"
-                        value={studentFilters.query}
-                        onChange={(v) => setStudentFilters((p) => ({ ...p, query: v }))}
-                        placeholder="Name or email"
-                      />
-                      <Field
-                        label="Behavior"
-                        value={studentFilters.behavior}
-                        onChange={(v) => setStudentFilters((p) => ({ ...p, behavior: v }))}
-                        type="select"
-                        options={[{ value: "all", label: "All" }, ...BEHAVIOR_LABELS.map((b) => ({ value: b, label: b }))]}
-                      />
-                      <Field
-                        label="Participation"
-                        value={studentFilters.participation}
-                        onChange={(v) => setStudentFilters((p) => ({ ...p, participation: v }))}
-                        type="select"
-                        options={[
-                          { value: "all", label: "All" },
-                          { value: "attempted", label: "Attempted" },
-                          { value: "not_attempted", label: "Not Attempted" },
-                        ]}
-                      />
-                      <div className="flex items-end">
-                        <button
-                          onClick={() => setStudentFilters({ query: "", behavior: "all", participation: "all" })}
-                          className="w-full py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50"
-                        >
-                          Reset Filters
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                    <div className="px-5 py-4 border-b border-gray-100">
-                      <h4 className="font-bold text-[#1a1a2e]">Students</h4>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full text-sm">
-                        <thead className="bg-gray-50 text-gray-500">
-                          <tr>
-                            <th className="text-left px-4 py-3 font-semibold">Student</th>
-                            <th className="text-left px-4 py-3 font-semibold">Tests Taken</th>
-                            <th className="text-left px-4 py-3 font-semibold">Avg Score</th>
-                            <th className="text-left px-4 py-3 font-semibold">Avg Time</th>
-                            <th className="text-left px-4 py-3 font-semibold">Behavior</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredStudentRows.map((row) => (
-                            <tr
-                              key={row.id}
-                              onClick={() => setSelectedStudentId(row.id)}
-                              className={`border-t border-gray-100 cursor-pointer ${selectedStudentId === row.id ? "bg-orange-50" : "hover:bg-gray-50"}`}
-                            >
-                              <td className="px-4 py-3">
-                                <p className="font-semibold text-[#1a1a2e]">{row.name}</p>
-                                <p className="text-xs text-gray-400">{row.email}</p>
-                              </td>
-                              <td className="px-4 py-3 text-gray-600">{row.tests}</td>
-                              <td className="px-4 py-3 text-gray-600">{row.tests ? `${row.avgScore}%` : "—"}</td>
-                              <td className="px-4 py-3 text-gray-600">{row.tests ? `${row.avgTime}s` : "—"}</td>
-                              <td className="px-4 py-3 text-gray-600">{row.behavior}</td>
-                            </tr>
-                          ))}
-                          {filteredStudentRows.length === 0 && (
-                            <tr>
-                              <td className="px-4 py-6 text-gray-400" colSpan={5}>No students match these filters.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {selectedStudent && (
-                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
-                      <div>
-                        <h4 className="font-bold text-[#1a1a2e] text-lg">{selectedStudent.name}</h4>
-                        <p className="text-sm text-gray-500">{selectedStudent.email}</p>
-                      </div>
-                      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                        <StatCard icon="🧪" value={selectedStudent.tests} label="Tests Taken" gradient="from-blue-400 to-blue-600" className="!p-4" />
-                        <StatCard icon="🎯" value={selectedStudent.tests ? `${selectedStudent.avgScore}%` : "—"} label="Avg Score" gradient="from-emerald-400 to-emerald-600" className="!p-4" />
-                        <StatCard icon="⏱️" value={selectedStudent.tests ? `${selectedStudent.avgTime}s` : "—"} label="Avg Time" gradient="from-amber-400 to-amber-600" className="!p-4" />
-                        <StatCard icon="🔁" value={selectedStudent.tests ? selectedStudent.avgRevisions : "—"} label="Avg Revisions" gradient="from-violet-400 to-violet-600" className="!p-4" />
-                        <StatCard icon="🧠" value={selectedStudent.behavior} label="Behavior" gradient="from-rose-400 to-rose-600" className="!p-4" />
-                      </div>
-                      <ChartCard title="Scores Across Teacher Exams">
-                        <ResponsiveContainer width="100%" height={250}>
-                          <BarChart data={selectedStudentAttempts.map((a) => ({ exam: a.exam_title, score: Math.round(a.score || 0) }))}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                            <XAxis dataKey="exam" hide={selectedStudentAttempts.length > 5} />
-                            <YAxis domain={[0, 100]} />
-                            <Tooltip />
-                            <Bar dataKey="score" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </ChartCard>
-                    </div>
-                  )}
-                </div>
+                <StudentWiseAnalyticsTab
+                  students={students}
+                  exams={exams}
+                  allTeacherAttempts={allTeacherAttempts}
+                  token={token}
+                  loading={loadingAnalytics}
+                  initialStudentId={selectedStudentId}
+                  onStudentSelect={setSelectedStudentId}
+                />
               )}
             </div>
           )}
@@ -1829,15 +1318,6 @@ function StatCard({ icon, value, label, gradient, className = "" }) {
         <p className="text-2xl font-extrabold text-[#1a1a2e]">{value}</p>
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-0.5">{label}</p>
       </div>
-    </div>
-  )
-}
-
-function ChartCard({ title, children }) {
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 lg:p-5">
-      <h4 className="font-bold text-[#1a1a2e] text-sm mb-4">{title}</h4>
-      {children}
     </div>
   )
 }

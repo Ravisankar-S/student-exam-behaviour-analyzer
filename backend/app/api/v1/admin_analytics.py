@@ -11,6 +11,7 @@ from app.models.student_profile import StudentProfile
 from app.models.teacher_profile import TeacherProfile
 from app.models.assessment import Assessment
 from app.models.attempt import Attempt
+from app.models.attempt_feature import AttemptFeature
 from app.models.question import Question
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin-analytics"])
@@ -48,6 +49,13 @@ def _derive_behavior_label(attempt: Attempt, exam_duration_minutes: Optional[int
     if duration >= int(exam_seconds * 0.85):
         return "Deliberative"
     return "High_Revision"
+
+
+def _resolve_behavior_label(db: Session, attempt: Attempt, exam_duration_minutes: Optional[int]) -> str:
+    feature = db.query(AttemptFeature).filter(AttemptFeature.attempt_id == attempt.id).first()
+    if feature and feature.behavior_label:
+        return str(feature.behavior_label)
+    return _derive_behavior_label(attempt, exam_duration_minutes)
 
 
 @router.get("/overview")
@@ -334,7 +342,7 @@ def get_student_exam_history(
 
     items = []
     for attempt, assessment, teacher in rows:
-        behavior = _derive_behavior_label(attempt, assessment.duration_minutes)
+        behavior = _resolve_behavior_label(db, attempt, assessment.duration_minutes)
         items.append({
             "attempt_id": str(attempt.id),
             "exam_id": str(assessment.id),
@@ -421,7 +429,7 @@ def get_student_subject_behaviour(
 
     grouped = defaultdict(lambda: defaultdict(int))
     for attempt, assessment in rows:
-        label = _derive_behavior_label(attempt, assessment.duration_minutes)
+        label = _resolve_behavior_label(db, attempt, assessment.duration_minutes)
         grouped[assessment.subject or "Unknown"][label] += 1
 
     items = []
@@ -488,7 +496,7 @@ def get_teacher_exam_analytics(
 
         behaviour_counts = defaultdict(int)
         for attempt in attempts:
-            behaviour_counts[_derive_behavior_label(attempt, exam.duration_minutes)] += 1
+            behaviour_counts[_resolve_behavior_label(db, attempt, exam.duration_minutes)] += 1
 
         items.append({
             "exam_id": str(exam.id),

@@ -1,0 +1,48 @@
+{
+  "feature_columns": [
+    "avg_time",
+    "time_variance",
+    "revision_count",
+    "wr_ratio",
+    "rw_ratio",
+    "navigation_count",
+    "rte_score",
+    "accuracy"
+  ],
+  "target_column": "behavioural_label",
+  "metrics": {
+    "rows": 2400,
+    "train_rows": 1920,
+    "test_rows": 480,
+    "n_classes": 6,
+    "test_accuracy": 0.94375,
+    "best_cv_accuracy": 0.9588541666666666,
+    "cv_scores": [
+      0.95,
+      0.9354166666666667,
+      0.9270833333333334,
+      0.9604166666666667,
+      0.9520833333333333
+    ],
+    "cv_mean_accuracy": 0.945,
+    "cv_std_accuracy": 0.012047360245667452,
+    "tree_depth": 15,
+    "n_leaves": 59,
+    "best_params": {
+      "class_weight": null,
+      "criterion": "gini",
+      "max_depth": null,
+      "min_samples_leaf": 2
+    },
+    "stratified_split": true
+  },
+  "training_csv": "train_data\\raw\\user_data_v5.csv",
+  "label_mapping": {
+    "0": "Deliberative",
+    "1": "Disengaged",
+    "2": "Fast-Response",
+    "3": "High-Revision",
+    "4": "Inconsistent",
+    "5": "Reviewer"
+  }
+}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, CheckCircle2, SkipForward } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Eye, SendHorizonal, SkipForward } from "lucide-react"
 
 function toAbsoluteImageUrl(path) {
   if (!path) return null
@@ -13,12 +13,25 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
   const [statusByQuestion, setStatusByQuestion] = useState({})
   const [startedAt] = useState(() => new Date().toISOString())
   const [remainingSeconds, setRemainingSeconds] = useState(() => Math.max(0, (exam?.duration_minutes || 60) * 60))
+  const [lastQuestionModalOpen, setLastQuestionModalOpen] = useState(false)
   const autoSubmittedRef = useRef(false)
+  const eventLogsRef = useRef([])
+  const visitIndexByQuestionRef = useRef({})
+  const currentVisitRef = useRef(null)
+  const lastCommittedSelectionRef = useRef({})
 
   const currentQuestion = questions[currentIndex]
+  const questionById = useMemo(() => {
+    const map = {}
+    for (const question of questions) {
+      map[question.id] = question
+    }
+    return map
+  }, [questions])
   const processedCount = Object.keys(statusByQuestion).length
   const progressPercent = questions.length ? Math.round((processedCount / questions.length) * 100) : 0
   const allHandled = processedCount === questions.length && questions.length > 0
+  const unhandledCount = Math.max(questions.length - processedCount, 0)
 
   const selectedOption = currentQuestion ? selectedByQuestion[currentQuestion.id] : ""
 
@@ -35,8 +48,70 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
   useEffect(() => {
     const total = Math.max(0, (exam?.duration_minutes || 60) * 60)
     setRemainingSeconds(total)
+    setLastQuestionModalOpen(false)
     autoSubmittedRef.current = false
+    eventLogsRef.current = []
+    visitIndexByQuestionRef.current = {}
+    currentVisitRef.current = null
+    lastCommittedSelectionRef.current = {}
   }, [exam?.id, exam?.duration_minutes])
+
+  useEffect(() => {
+    if (!currentQuestion) return
+    beginVisit(currentQuestion.id)
+  }, [currentQuestion?.id])
+
+  function beginVisit(questionId) {
+    const previousCount = visitIndexByQuestionRef.current[questionId] || 0
+    const nextVisitIndex = previousCount + 1
+    visitIndexByQuestionRef.current[questionId] = nextVisitIndex
+
+    currentVisitRef.current = {
+      questionId,
+      visitIndex: nextVisitIndex,
+      enteredAtMs: Date.now(),
+    }
+  }
+
+  function toOptionLetter(questionId, optionId) {
+    if (!optionId) return null
+    const question = questionById[questionId]
+    if (!question) return null
+    const idx = (question.options || []).findIndex((option) => option.id === optionId)
+    if (idx < 0 || idx > 3) return null
+    return String.fromCharCode(65 + idx)
+  }
+
+  function commitCurrentVisitEvent() {
+    const visit = currentVisitRef.current
+    if (!visit) return
+
+    const question = questionById[visit.questionId]
+    if (!question) {
+      currentVisitRef.current = null
+      return
+    }
+
+    const nowMs = Date.now()
+    const elapsedSec = Math.max(0, (nowMs - visit.enteredAtMs) / 1000)
+    const selectedOptionId = selectedByQuestion[visit.questionId] || null
+    const selectedOption = toOptionLetter(visit.questionId, selectedOptionId)
+    const previousSelection = lastCommittedSelectionRef.current[visit.questionId] || null
+
+    eventLogsRef.current.push({
+      question_id: visit.questionId,
+      timestamp: new Date(nowMs).toISOString(),
+      time_spent_sec: Number(elapsedSec.toFixed(3)),
+      selected_option: selectedOption,
+      answer_changed: Boolean(previousSelection && selectedOption && previousSelection !== selectedOption),
+      visit_index: visit.visitIndex,
+    })
+
+    if (selectedOption) {
+      lastCommittedSelectionRef.current[visit.questionId] = selectedOption
+    }
+    currentVisitRef.current = null
+  }
 
   function buildResponses() {
     return questions.map((question) => {
@@ -53,6 +128,7 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
     const responses = buildResponses()
     onSubmitAttempt({
       responses,
+      events: [...eventLogsRef.current],
       started_at: startedAt,
       submitted_at: new Date().toISOString(),
       auto_submitted: isAuto,
@@ -60,11 +136,12 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
   }
 
   useEffect(() => {
-    if (submitting || allHandled || questions.length === 0) return
+    if (submitting || questions.length === 0) return
 
     if (remainingSeconds <= 0 && !autoSubmittedRef.current) {
       autoSubmittedRef.current = true
       onFlash?.("Time is up. Exam submitted automatically.", "error")
+      commitCurrentVisitEvent()
       submitPayload(true)
       return
     }
@@ -74,7 +151,7 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
     }, 1000)
 
     return () => window.clearInterval(timer)
-  }, [remainingSeconds, submitting, allHandled, questions.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [remainingSeconds, submitting, questions.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const minutesLeft = Math.floor(remainingSeconds / 60)
   const secondsLeft = remainingSeconds % 60
@@ -88,6 +165,9 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
       return
     }
 
+    const isLastQuestion = currentIndex === questions.length - 1
+    commitCurrentVisitEvent()
+
     const questionId = currentQuestion.id
     setStatusByQuestion((prev) => ({ ...prev, [questionId]: kind }))
 
@@ -99,6 +179,14 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
       })
     }
 
+    if (isLastQuestion) {
+      beginVisit(questionId)
+      if (kind === "answered") {
+        setLastQuestionModalOpen(true)
+      }
+      return
+    }
+
     if (currentIndex < questions.length - 1) {
       setCurrentIndex((prev) => prev + 1)
     }
@@ -106,10 +194,20 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
 
   function goToQuestion(index) {
     if (index < 0 || index >= questions.length) return
+    if (index !== currentIndex) commitCurrentVisitEvent()
     setCurrentIndex(index)
   }
 
   function handleFinalSubmit() {
+    if (submitting) return
+    if (unhandledCount > 0) {
+      const shouldContinue = window.confirm(
+        `${unhandledCount} question(s) are still unhandled. They will be submitted as skipped. Continue with final submit?`,
+      )
+      if (!shouldContinue) return
+    }
+    setLastQuestionModalOpen(false)
+    commitCurrentVisitEvent()
     submitPayload(false)
   }
 
@@ -121,13 +219,26 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
             <p className="text-xs uppercase tracking-wider text-gray-400 font-semibold">Exam In Progress</p>
             <h3 className="font-bold text-[#1a1a2e] text-lg">{exam?.title}</h3>
           </div>
-          <div className="text-right">
-            <p className="text-xs text-gray-500">Progress</p>
-            <p className="text-sm font-bold text-[#1a1a2e]">{processedCount}/{questions.length} handled</p>
-          <div className="text-right">
-            <p className="text-xs text-gray-500">Time Left</p>
-            <p className={`text-sm font-bold ${remainingSeconds <= 60 ? "text-red-600" : "text-[#1a1a2e]"}`}>{timerText}</p>
-          </div>
+          <div className="flex items-center gap-4 ml-auto">
+            <div className="text-right">
+              <p className="text-xs text-gray-500">Progress</p>
+              <p className="text-sm font-bold text-[#1a1a2e]">{processedCount}/{questions.length} handled</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-500">Time Left</p>
+              <p className={`text-sm font-bold ${remainingSeconds <= 60 ? "text-red-600" : "text-[#1a1a2e]"}`}>{timerText}</p>
+            </div>
+            <button
+              onClick={handleFinalSubmit}
+              disabled={submitting}
+              className={`relative overflow-hidden px-5 py-3 rounded-xl text-white text-sm font-extrabold tracking-wide uppercase shadow-lg border transition disabled:opacity-60 disabled:cursor-not-allowed ${allHandled ? "bg-gradient-to-r from-red-600 to-red-700 border-red-800 ring-4 ring-red-200 animate-pulse" : "bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] border-[#cf294f] hover:brightness-105"}`}
+              title="Final submission ends this exam attempt"
+            >
+              <span className="inline-flex items-center gap-2">
+                <SendHorizonal size={16} />
+                {submitting ? "Submitting…" : "Final Submit"}
+              </span>
+            </button>
           </div>
         </div>
 
@@ -157,7 +268,7 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
         </div>
       </div>
 
-      {!allHandled && currentQuestion && (
+      {currentQuestion && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
           <div className="flex items-start justify-between gap-4">
             <p className="text-sm font-bold text-[#1a1a2e]">Q{currentIndex + 1}. {currentQuestion.question_text}</p>
@@ -185,7 +296,7 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
           </div>
 
           <div className="flex items-center justify-between gap-3 flex-wrap border-t border-gray-100 pt-4">
-            <p className="text-xs font-semibold text-gray-500 inline-flex items-center gap-1.5"><AlertTriangle size={13} /> Submit or skip to move ahead.</p>
+            <p className="text-xs font-semibold text-gray-500 inline-flex items-center gap-1.5"><AlertTriangle size={13} /> Mark answer/skip to track progress. Exam is submitted only via Final Submit.</p>
             <div className="flex gap-2.5 w-full sm:w-auto">
               <button
                 onClick={() => markAndAdvance("skipped")}
@@ -205,9 +316,9 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
       )}
 
       {allHandled && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
-          <h3 className="text-lg font-bold text-[#1a1a2e]">All questions handled</h3>
-          <p className="text-sm text-gray-600">You have submitted or skipped every question. You can now finalize this attempt.</p>
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 shadow-sm p-4 space-y-2">
+          <h3 className="text-sm font-bold text-emerald-800">All questions handled</h3>
+          <p className="text-sm text-emerald-700">You can still navigate and change answers. Use Final Submit (top-right) when you are ready to end the exam.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
               <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Attempted</p>
@@ -218,13 +329,39 @@ export default function StudentExamRunner({ exam, questions = [], onSubmitAttemp
               <p className="text-xl font-bold text-[#1a1a2e]">{summary.skipped}</p>
             </div>
           </div>
-          <button
-            onClick={handleFinalSubmit}
-            disabled={submitting}
-            className="w-full md:w-auto px-6 py-2.5 rounded-xl bg-[#1a1a2e] text-white text-sm font-semibold hover:bg-[#2a2a46] transition disabled:opacity-60"
-          >
-            {submitting ? "Submitting…" : "Finish & View Result"}
-          </button>
+        </div>
+      )}
+
+      {lastQuestionModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[1px] flex items-center justify-center p-4" onClick={() => setLastQuestionModalOpen(false)}>
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-gray-200 p-5 space-y-4" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Last question submit options">
+            <div>
+              <h3 className="text-lg font-bold text-[#1a1a2e]">Last question submitted</h3>
+              <p className="text-sm text-gray-600 mt-1">You reached the end of the exam. Final Submit will end your attempt and lock further changes. Review will keep the exam open so you can revisit and edit answers.</p>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+              Progress: <span className="font-semibold">{processedCount}/{questions.length}</span> handled
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setLastQuestionModalOpen(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 bg-white text-sm font-semibold hover:bg-gray-50 transition inline-flex items-center justify-center gap-1.5"
+              >
+                <Eye size={15} /> Review
+              </button>
+              <button
+                type="button"
+                onClick={handleFinalSubmit}
+                disabled={submitting}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-red-800 text-white bg-gradient-to-r from-red-600 to-red-700 text-sm font-bold hover:brightness-105 transition disabled:opacity-60 inline-flex items-center justify-center gap-1.5"
+              >
+                <SendHorizonal size={15} /> {submitting ? "Submitting…" : "Final Submit"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
