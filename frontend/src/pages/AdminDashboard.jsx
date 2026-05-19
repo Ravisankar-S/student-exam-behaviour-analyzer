@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { createElement, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import {
+  AlertTriangle,
   Bell,
   Check,
+  CheckCircle2,
   ChevronDown,
+  Info,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -23,6 +26,7 @@ import {
   createTeacher,
   deleteProfilePicture,
   getAdmissionRequests,
+  getStudentProfileById,
   getTeachers,
   rejectAdmissionRequest,
   uploadProfilePicture,
@@ -31,6 +35,7 @@ import { updateProfile } from "../api/assessments"
 import ChangePasswordModal from "../components/ChangePasswordModal"
 import Avatar from "../components/dashboard/DashboardAvatar"
 import ImagePreviewModal from "../components/dashboard/ImagePreviewModal"
+import ProfileIdCard from "../components/dashboard/ProfileIdCard"
 import {
   getAdminFailureRates,
   getAdminOverview,
@@ -43,6 +48,7 @@ import {
 import StudentAnalyticsDetailPanel from "../components/admin/StudentAnalyticsDetailPanel"
 import TeacherAnalyticsDetailPanel from "../components/admin/TeacherAnalyticsDetailPanel"
 import AnalyticsLayerTray from "../components/admin/AnalyticsLayerTray"
+import { computeAdminInsights } from "../utils/adminInsights"
 
 const defaultStudentHistoryFilters = {
   startDate: "",
@@ -51,6 +57,12 @@ const defaultStudentHistoryFilters = {
   teacherId: "",
   assessmentId: "",
 }
+
+const insightPeriods = [
+  { key: "week", label: "This Week" },
+  { key: "month", label: "This Month" },
+  { key: "all", label: "All Time" },
+]
 
 function formatTime(value) {
   if (!value) return "—"
@@ -85,6 +97,10 @@ export default function AdminDashboard() {
 
   const [overview, setOverview] = useState(null)
   const [overviewLoading, setOverviewLoading] = useState(false)
+  const [insightsPeriod, setInsightsPeriod] = useState("month")
+  const [insightsData, setInsightsData] = useState({ students: [], teachers: [], studentHistories: {}, teacherDetails: {} })
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsErrored, setInsightsErrored] = useState(false)
   const [analyticsStudents, setAnalyticsStudents] = useState([])
   const [analyticsTeachers, setAnalyticsTeachers] = useState([])
   const [failureRates, setFailureRates] = useState([])
@@ -110,6 +126,8 @@ export default function AdminDashboard() {
   const [analyticsLayer, setAnalyticsLayer] = useState("students")
   const [studentLayerView, setStudentLayerView] = useState("list")
   const [teacherLayerView, setTeacherLayerView] = useState("list")
+  const [profileModal, setProfileModal] = useState(null)
+  const [profileModalLoading, setProfileModalLoading] = useState(false)
 
   const [createTeacherOpen, setCreateTeacherOpen] = useState(false)
   const [teacherCreating, setTeacherCreating] = useState(false)
@@ -147,6 +165,7 @@ export default function AdminDashboard() {
     loadStudentsData()
     loadFacultyData()
     loadAnalyticsOverview()
+    loadAdminInsightsData()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -209,6 +228,65 @@ export default function AdminDashboard() {
       flash(err?.response?.data?.detail || "Failed to load platform overview", "error")
     } finally {
       setOverviewLoading(false)
+    }
+  }
+
+  async function loadPaginated(fetcher, params = {}) {
+    const first = await fetcher({ ...params, page: 1, page_size: 100 })
+    const items = [...(first.data?.items || [])]
+    const totalPages = first.data?.pagination?.total_pages || 1
+    if (totalPages <= 1) return { ...first.data, items }
+
+    const rest = await Promise.all(
+      Array.from({ length: totalPages - 1 }, (_, index) =>
+        fetcher({ ...params, page: index + 2, page_size: 100 })
+      )
+    )
+    rest.forEach((response) => items.push(...(response.data?.items || [])))
+    return { ...first.data, items }
+  }
+
+  async function loadAdminInsightsData() {
+    setInsightsLoading(true)
+    setInsightsErrored(false)
+    try {
+      const [studentsPayload, teachersPayload] = await Promise.all([
+        loadPaginated((params) => getAdminStudentsDirectory(token, params)),
+        loadPaginated((params) => getAdminTeachersDirectory(token, params)),
+      ])
+
+      const students = studentsPayload.items || []
+      const teachers = teachersPayload.items || []
+
+      const teacherEntries = await Promise.all(
+        teachers.map(async (teacher) => {
+          const teacherId = teacher.teacher_id
+          if (!teacherId) return null
+          const payload = await loadPaginated((params) => getAdminTeacherExamAnalytics(token, teacherId, params))
+          return [teacherId, payload]
+        })
+      )
+
+      const studentEntries = await Promise.all(
+        students.map(async (student) => {
+          const studentId = student.student_id
+          if (!studentId) return null
+          const payload = await loadPaginated((params) => getAdminStudentHistory(token, studentId, params))
+          return [studentId, payload]
+        })
+      )
+
+      setInsightsData({
+        students,
+        teachers,
+        teacherDetails: Object.fromEntries(teacherEntries.filter(Boolean)),
+        studentHistories: Object.fromEntries(studentEntries.filter(Boolean)),
+      })
+    } catch {
+      setInsightsErrored(true)
+      setInsightsData({ students: [], teachers: [], studentHistories: {}, teacherDetails: {} })
+    } finally {
+      setInsightsLoading(false)
     }
   }
 
@@ -413,8 +491,6 @@ export default function AdminDashboard() {
       await changePassword(token, data)
       setChangePasswordOpen(false)
       flash("Password updated")
-    } catch (err) {
-      throw err
     } finally {
       setPasswordLoading(false)
     }
@@ -488,6 +564,34 @@ export default function AdminDashboard() {
     setTeacherLayerView("detail")
   }
 
+  async function openStudentProfileModal(student) {
+    setProfileModalLoading(true)
+    setProfileModal({ type: "student", data: student })
+    try {
+      const response = await getStudentProfileById(token, student.student_id)
+      setProfileModal({ type: "student", data: response.data || student })
+    } catch (err) {
+      flash(err?.response?.data?.detail || "Failed to load student profile", "error")
+    } finally {
+      setProfileModalLoading(false)
+    }
+  }
+
+  function openTeacherProfileModal(teacher) {
+    const fullTeacher = teachers.find((item) => item.id === teacher.teacher_id) || teacher
+    setProfileModal({ type: "teacher", data: fullTeacher })
+  }
+
+  function openProfileAnalytics() {
+    if (!profileModal?.data) return
+    if (profileModal.type === "student") {
+      handleSelectAnalyticsStudent(profileModal.data.id || profileModal.data.student_id)
+    } else {
+      handleSelectAnalyticsTeacher(profileModal.data.id || profileModal.data.teacher_id)
+    }
+    setProfileModal(null)
+  }
+
   function backToStudentDirectory() {
     setStudentLayerView("list")
   }
@@ -522,6 +626,11 @@ export default function AdminDashboard() {
   const sectionTitle = navItems.find((item) => item.key === activeTab)?.label
   const selectedStudent = analyticsStudents.find((item) => item.student_id === selectedAnalyticsStudentId) || null
   const selectedTeacher = analyticsTeachers.find((item) => item.teacher_id === selectedAnalyticsTeacherId) || null
+  const insights = useMemo(() => computeAdminInsights({
+    ...insightsData,
+    overview,
+    period: insightsPeriod,
+  }), [insightsData, insightsPeriod, overview])
 
   return (
     <div className="min-h-screen bg-[#f4f6fb] flex">
@@ -545,7 +654,7 @@ export default function AdminDashboard() {
               title={sidebarCollapsed ? label : undefined}
               className={`w-full flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"} px-4 py-2.5 rounded-xl font-semibold text-sm transition-all ${activeTab === key ? "bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white shadow-sm" : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"}`}
             >
-              <Icon size={17} />
+              {createElement(Icon, { size: 17 })}
               {!sidebarCollapsed && key !== "analytics" && label}
               {!sidebarCollapsed && key === "analytics" && (
                 <div className="flex items-center justify-between w-full">
@@ -736,7 +845,7 @@ export default function AdminDashboard() {
                             <button
                               key={item.student_id}
                               type="button"
-                              onClick={() => handleSelectAnalyticsStudent(item.student_id)}
+                              onClick={() => openStudentProfileModal(item)}
                               className="w-full text-left px-6 py-4 text-sm hover:bg-gray-50"
                             >
                               <p className="font-semibold text-[#1a1a2e]">{item.name} <span className="text-gray-400">({item.reg_no || "No Reg"})</span></p>
@@ -809,7 +918,7 @@ export default function AdminDashboard() {
                             <button
                               key={item.teacher_id}
                               type="button"
-                              onClick={() => handleSelectAnalyticsTeacher(item.teacher_id)}
+                              onClick={() => openTeacherProfileModal(item)}
                               className="w-full text-left px-6 py-4 text-sm hover:bg-gray-50"
                             >
                               <p className="font-semibold text-[#1a1a2e]">{item.name}</p>
@@ -848,6 +957,16 @@ export default function AdminDashboard() {
               )}
 
               {analyticsLayer === "failure" && (
+                <InsightsSection
+                  insights={insights}
+                  loading={insightsLoading || overviewLoading}
+                  errored={insightsErrored}
+                  period={insightsPeriod}
+                  onPeriodChange={setInsightsPeriod}
+                />
+              )}
+
+              {analyticsLayer === "__legacy_failure" && (
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-gray-100">
                     <h3 className="font-bold text-[#1a1a2e]">Failure Rate Monitoring</h3>
@@ -1039,7 +1158,219 @@ export default function AdminDashboard() {
         onSubmit={handleCreateTeacher}
       />
 
+      {profileModal && (
+        <DirectoryProfileModal
+          type={profileModal.type}
+          data={profileModal.data}
+          loading={profileModalLoading}
+          onClose={() => setProfileModal(null)}
+          onOpenAnalytics={openProfileAnalytics}
+          onAvatarClick={setImageModalSrc}
+        />
+      )}
+
       {imageModalSrc && <ImagePreviewModal src={imageModalSrc} onClose={() => setImageModalSrc(null)} />}
+    </div>
+  )
+}
+
+const insightTheme = {
+  critical: {
+    border: "border-l-red-500",
+    badge: "bg-red-100 text-red-700 border-red-200",
+    icon: "text-red-600 bg-red-50",
+    Icon: AlertTriangle,
+  },
+  warning: {
+    border: "border-l-amber-500",
+    badge: "bg-amber-100 text-amber-700 border-amber-200",
+    icon: "text-amber-600 bg-amber-50",
+    Icon: AlertTriangle,
+  },
+  info: {
+    border: "border-l-blue-500",
+    badge: "bg-blue-100 text-blue-700 border-blue-200",
+    icon: "text-blue-600 bg-blue-50",
+    Icon: Info,
+  },
+}
+
+function InsightsSection({ insights, loading, errored, period, onPeriodChange }) {
+  if (errored) return null
+
+  return (
+    <section className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h3 className="font-bold text-[#1a1a2e]">Flagged Insights</h3>
+          <span className="min-w-[24px] h-6 px-2 rounded-full bg-[#1a1a2e] text-white text-xs font-bold flex items-center justify-center">
+            {loading ? "..." : insights.length}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1">
+          {insightPeriods.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onPeriodChange(item.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${period === item.key ? "bg-white text-[#1a1a2e] shadow-sm" : "text-gray-500 hover:text-gray-800"}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="p-5 grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <InsightSkeleton />
+          <InsightSkeleton />
+        </div>
+      ) : insights.length === 0 ? (
+        <div className="p-5">
+          <div className="border border-emerald-200 bg-emerald-50 rounded-xl p-4 flex items-start gap-3">
+            <div className="h-10 w-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={19} />
+            </div>
+            <div>
+              <p className="font-bold text-emerald-800">All Clear</p>
+              <p className="text-sm text-emerald-700 mt-0.5">No anomalies detected in the current period</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="p-5 grid grid-cols-1 xl:grid-cols-2 gap-3">
+          {insights.map((insight) => <InsightCard key={insight.id} insight={insight} />)}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function InsightCard({ insight }) {
+  const theme = insightTheme[insight.severity] || insightTheme.info
+  const Icon = theme.Icon
+  const affected = Array.isArray(insight.affectedEntities) ? insight.affectedEntities.filter(Boolean) : []
+  const visibleAffected = affected.slice(0, 3)
+  const hiddenAffectedCount = Math.max(affected.length - visibleAffected.length, 0)
+
+  return (
+    <div className={`relative rounded-xl border border-gray-100 border-l-4 ${theme.border} bg-white p-4 shadow-sm`}>
+      <div className="flex items-start gap-3 pr-20">
+        <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${theme.icon}`}>
+          <Icon size={18} />
+        </div>
+        <div className="min-w-0">
+          <p className="font-bold text-[#1a1a2e] leading-snug">{insight.title}</p>
+          <p className="text-sm text-gray-500 mt-1 leading-relaxed">{insight.detail}</p>
+        </div>
+      </div>
+      <span className={`absolute right-4 top-4 max-w-[72px] truncate rounded-full border px-2.5 py-1 text-[11px] font-bold ${theme.badge}`} title={insight.metric}>
+        {insight.metric}
+      </span>
+      {affected.length > 0 && (
+        <p className="mt-3 pl-[52px] text-xs font-semibold text-gray-500 truncate">
+          Affected: <span className="text-gray-700">{visibleAffected.join(", ")}{hiddenAffectedCount > 0 ? ` +${hiddenAffectedCount} more` : ""}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
+function InsightSkeleton() {
+  return (
+    <div className="rounded-xl border border-gray-100 border-l-4 border-l-gray-200 bg-white p-4 shadow-sm animate-pulse">
+      <div className="flex items-start gap-3">
+        <div className="h-10 w-10 rounded-xl bg-gray-100 shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 bg-gray-100 rounded w-3/4" />
+          <div className="h-3 bg-gray-100 rounded w-full" />
+          <div className="h-3 bg-gray-100 rounded w-1/2" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DirectoryProfileModal({ type, data, loading, onClose, onOpenAnalytics, onAvatarClick }) {
+  const isTeacher = type === "teacher"
+  const profile = isTeacher ? (data.teacher_profile || {}) : (data.student_profile || data || {})
+  const name = data.name || "Profile"
+  const email = profile.college_email || data.email || "No email"
+  const rows = isTeacher
+    ? [
+        { label: "Employee ID", value: profile.employee_id },
+        { label: "Department", value: profile.department || data.department },
+        { label: "Designation", value: profile.designation },
+        { label: "Office", value: profile.office_room },
+        { label: "Joined", value: profile.year_of_joining },
+        { label: "Subjects", value: profile.subjects, fullWidth: true },
+      ]
+    : [
+        { label: "Reg No", value: profile.reg_no || data.reg_no },
+        { label: "Department", value: profile.department || data.department },
+        { label: "Division", value: profile.division || data.division },
+        { label: "Roll No", value: profile.class_roll_no || data.class_roll_no },
+        { label: "Semester", value: profile.semester || data.semester },
+        { label: "Joined", value: profile.year_of_joining || data.year_of_joining },
+      ]
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[86vh] overflow-hidden shadow-xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-bold text-[#1a1a2e]">{isTeacher ? "Teacher Profile" : "Student Profile"}</h3>
+            {loading && <p className="text-xs text-gray-400 mt-0.5">Loading profile details...</p>}
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto max-h-[calc(86vh-73px)] space-y-4">
+          <ProfileIdCard
+            title={isTeacher ? "Faculty ID Card" : "Student ID Card"}
+            name={name}
+            subtitle={email}
+            roleLabel={isTeacher ? "Teacher" : "Student"}
+            imagePath={data.profile_picture_path}
+            avatarFallback={isTeacher ? "T" : "S"}
+            onAvatarClick={onAvatarClick}
+            rows={rows}
+          />
+
+          <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            {rows.map((row) => (
+              <div key={row.label} className={row.fullWidth ? "sm:col-span-2" : ""}>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{row.label}</p>
+                <p className="font-semibold text-[#1a1a2e] mt-0.5">{row.value || "Not provided"}</p>
+              </div>
+            ))}
+            <div className="sm:col-span-2">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Email</p>
+              <p className="font-semibold text-[#1a1a2e] mt-0.5 break-all">{email}</p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 border border-gray-200 text-gray-600 text-sm font-semibold rounded-xl hover:bg-gray-50 transition"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={onOpenAnalytics}
+              className="px-5 py-2.5 bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] text-white text-sm font-semibold rounded-xl hover:opacity-90 transition"
+            >
+              Open Analytics
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

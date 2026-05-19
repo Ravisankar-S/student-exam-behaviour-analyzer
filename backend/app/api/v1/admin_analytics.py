@@ -502,6 +502,7 @@ def get_teacher_exam_analytics(
             "exam_id": str(exam.id),
             "exam": exam.title,
             "subject": exam.subject,
+            "created_at": exam.created_at.isoformat() if exam.created_at else None,
             "attempts": len(attempts),
             "avg_score": avg_score,
             "avg_time_seconds": avg_time,

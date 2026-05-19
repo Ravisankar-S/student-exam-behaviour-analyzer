@@ -88,11 +88,15 @@ def _serialize_teacher_user(user: User):
         "name": user.name,
         "email": user.email,
         "created_at": _to_utc_iso(user.created_at),
+        "profile_picture_path": user.profile_picture_path,
         "teacher_profile": {
             "employee_id": profile.employee_id if profile else None,
             "college_email": profile.college_email if profile else None,
             "department": profile.department if profile else None,
             "designation": profile.designation if profile else None,
+            "subjects": profile.subjects if profile else None,
+            "office_room": profile.office_room if profile else None,
+            "year_of_joining": profile.year_of_joining if profile else None,
         },
     }
 

@@ -1,20 +1,8 @@
 import { useMemo, useState } from "react"
-import {
-  CartesianGrid,
-  Cell,
-  Legend,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Scatter,
-  ScatterChart,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
+import SankeyBridgeChart from "./SankeyBridgeChart"
 
-const PIE_COLORS = ["#2563eb", "#0ea5e9", "#14b8a6", "#f59e0b", "#ef4444", "#7c3aed", "#db2777"]
 const CLUSTER_COLORS = ["#1d4ed8", "#0f766e", "#be123c", "#7c2d12", "#4338ca", "#15803d", "#9f1239"]
+const CLASS_COLORS = ["#2563eb", "#0ea5e9", "#14b8a6", "#f59e0b", "#ef4444", "#7c3aed", "#db2777"]
 
 function formatClusterName(clusterValue) {
   if (clusterValue === null || clusterValue === undefined) return "No Cluster"
@@ -26,48 +14,15 @@ function normalizeClassLabel(value) {
   return String(value)
 }
 
-function StudentListPanel({ title, students, onStudentNavigate }) {
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-100">
-        <h4 className="font-bold text-[#1a1a2e] text-sm">{title}</h4>
-      </div>
-      <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
-        {students.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-gray-500">No students found for this selection.</div>
-        ) : (
-          students.map((student) => (
-            <div key={`${student.student_id}-${student.attempt_id}`} className="px-4 py-3 flex items-center justify-between gap-3 text-sm">
-              <div className="min-w-0">
-                <button
-                  type="button"
-                  onClick={() => onStudentNavigate(student.student_id)}
-                  className="font-semibold text-blue-700 hover:underline text-left"
-                >
-                  {student.student_name || "Unknown Student"}
-                </button>
-                <p className="text-xs text-gray-500 truncate">{student.student_email || "No email"}</p>
-              </div>
-              <p className="text-xs font-semibold text-gray-500">Score {student.score ?? "-"}%</p>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
-
 export default function ExamWiseAnalyticsTab({
   exams,
   examAttemptsMap,
   loading,
-  onStudentNavigate,
 }) {
   const [query, setQuery] = useState("")
   const [subjectFilter, setSubjectFilter] = useState("all")
   const [selectedExamId, setSelectedExamId] = useState(null)
-  const [selectedClassLabel, setSelectedClassLabel] = useState(null)
-  const [selectedClusterValue, setSelectedClusterValue] = useState(null)
+  const [chartViewMode, setChartViewMode] = useState("combined")
 
   const subjectOptions = useMemo(
     () => [...new Set((exams || []).map((item) => item.subject).filter(Boolean))].sort(),
@@ -133,16 +88,6 @@ export default function ExamWiseAnalyticsTab({
     return Array.from(grouped.values()).sort((a, b) => b.count - a.count)
   }, [selectedExamAttempts])
 
-  const classPanelData = useMemo(
-    () => classDistribution.find((item) => item.classLabel === selectedClassLabel) || null,
-    [classDistribution, selectedClassLabel]
-  )
-
-  const clusterPanelData = useMemo(
-    () => clusterDistribution.find((item) => item.clusterValue === selectedClusterValue) || null,
-    [clusterDistribution, selectedClusterValue]
-  )
-
   if (loading) {
     return (
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-sm text-gray-500 text-center">
@@ -182,8 +127,7 @@ export default function ExamWiseAnalyticsTab({
               type="button"
               onClick={() => {
                 setSelectedExamId(exam.id)
-                setSelectedClassLabel(null)
-                setSelectedClusterValue(null)
+                setChartViewMode("combined")
               }}
               className="text-left bg-white rounded-2xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition"
             >
@@ -215,8 +159,7 @@ export default function ExamWiseAnalyticsTab({
           type="button"
           onClick={() => {
             setSelectedExamId(null)
-            setSelectedClassLabel(null)
-            setSelectedClusterValue(null)
+            setChartViewMode("combined")
           }}
           className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50"
         >
@@ -224,84 +167,64 @@ export default function ExamWiseAnalyticsTab({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 lg:p-5">
-          <h4 className="font-bold text-[#1a1a2e] text-sm mb-4">Class Distribution (Supervised Model)</h4>
-          {classDistribution.length === 0 ? (
-            <p className="text-sm text-gray-500">No supervised class data available for this exam.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={classDistribution}
-                  dataKey="count"
-                  nameKey="classLabel"
-                  outerRadius={96}
-                  onClick={(entry) => setSelectedClassLabel(entry?.classLabel || null)}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 lg:p-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+          <h4 className="font-bold text-[#1a1a2e] text-sm">Model Bridge Analysis</h4>
+          <div className="inline-flex bg-gray-50 border border-gray-200 rounded-xl p-1">
+            {[
+              { key: "combined", label: "Combined View" },
+              { key: "supervised", label: "Supervised Only" },
+              { key: "clusters", label: "Clusters Only" },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setChartViewMode(item.key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${chartViewMode === item.key ? "bg-[#1a1a2e] text-white" : "text-gray-600 hover:bg-white"}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <SankeyBridgeChart attempts={selectedExamAttempts} viewMode={chartViewMode} />
+
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Supervised classes</p>
+            <div className="flex flex-wrap gap-2">
+              {classDistribution.length === 0 ? (
+                <p className="text-sm text-gray-500">No supervised class data available.</p>
+              ) : classDistribution.map((item, index) => (
+                <div
+                  key={item.classLabel}
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold border bg-gray-50 text-gray-700 border-gray-200"
                 >
-                  {classDistribution.map((entry, index) => (
-                    <Cell key={entry.classLabel} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value, _name, payload) => [value, payload?.payload?.classLabel || "Class"]} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
+                  <span className="inline-block h-2 w-2 rounded-full mr-1.5" style={{ backgroundColor: CLASS_COLORS[index % CLASS_COLORS.length] }} />
+                  {item.classLabel}: {item.count}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">KMeans clusters</p>
+            <div className="flex flex-wrap gap-2">
+              {clusterDistribution.length === 0 ? (
+                <p className="text-sm text-gray-500">No cluster data available.</p>
+              ) : clusterDistribution.map((cluster, index) => (
+                <div
+                  key={cluster.key}
+                  className="px-2.5 py-1 rounded-full text-xs font-semibold border bg-gray-50 text-gray-700 border-gray-200"
+                >
+                  <span className="inline-block h-2 w-2 rounded-full mr-1.5" style={{ backgroundColor: CLUSTER_COLORS[index % CLUSTER_COLORS.length] }} />
+                  {cluster.clusterLabel}: {cluster.count}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 lg:p-5">
-          <h4 className="font-bold text-[#1a1a2e] text-sm mb-4">Cluster Analysis (K-Means)</h4>
-          {clusterDistribution.length === 0 ? (
-            <p className="text-sm text-gray-500">No cluster data available for this exam.</p>
-          ) : (
-            <>
-              <ResponsiveContainer width="100%" height={300}>
-                <ScatterChart>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis type="number" dataKey="x" name="Average Time" unit="s" />
-                  <YAxis type="number" dataKey="y" name="Score" unit="%" domain={[0, 100]} />
-                  <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                  <Legend />
-                  {clusterDistribution.map((cluster, index) => (
-                    <Scatter
-                      key={cluster.key}
-                      name={cluster.clusterLabel}
-                      data={cluster.scatterData}
-                      fill={CLUSTER_COLORS[index % CLUSTER_COLORS.length]}
-                    />
-                  ))}
-                </ScatterChart>
-              </ResponsiveContainer>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {clusterDistribution.map((cluster) => (
-                  <button
-                    key={cluster.key}
-                    type="button"
-                    onClick={() => setSelectedClusterValue(cluster.clusterValue)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${selectedClusterValue === cluster.clusterValue ? "bg-[#1a1a2e] text-white border-[#1a1a2e]" : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"}`}
-                  >
-                    {cluster.clusterLabel}: {cluster.count}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <StudentListPanel
-          title={classPanelData ? `${classPanelData.classLabel} Students` : "Select a class slice to view students"}
-          students={classPanelData?.students || []}
-          onStudentNavigate={onStudentNavigate}
-        />
-
-        <StudentListPanel
-          title={clusterPanelData ? `${clusterPanelData.clusterLabel} Students` : "Select a cluster to view students"}
-          students={clusterPanelData?.students || []}
-          onStudentNavigate={onStudentNavigate}
-        />
       </div>
     </div>
   )
