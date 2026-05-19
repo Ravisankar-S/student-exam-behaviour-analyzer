@@ -18,6 +18,7 @@ export default function ExamWiseAnalyticsTab({
   exams,
   examAttemptsMap,
   loading,
+  onStudentNavigate,
 }) {
   const [query, setQuery] = useState("")
   const [subjectFilter, setSubjectFilter] = useState("all")
@@ -188,7 +189,11 @@ export default function ExamWiseAnalyticsTab({
           </div>
         </div>
 
-        <SankeyBridgeChart attempts={selectedExamAttempts} viewMode={chartViewMode} />
+        <SankeyBridgeChart
+          attempts={selectedExamAttempts}
+          viewMode={chartViewMode}
+          onStudentNavigate={onStudentNavigate}
+        />
 
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
           <div>

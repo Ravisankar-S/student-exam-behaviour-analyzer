@@ -914,6 +914,10 @@ export default function TeacherDashboard() {
                   exams={exams}
                   examAttemptsMap={examAttemptsMap}
                   loading={loadingAnalytics}
+                  onStudentNavigate={(studentId) => {
+                    setSelectedStudentId(studentId)
+                    setAnalyticsTab("student")
+                  }}
                 />
               ) : loadingAnalytics ? (
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 text-gray-400 text-sm text-center">Loading analytics…</div>

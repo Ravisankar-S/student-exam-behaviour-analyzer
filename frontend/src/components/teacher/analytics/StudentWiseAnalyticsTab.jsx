@@ -433,8 +433,8 @@ export default function StudentWiseAnalyticsTab({
         ) : (
           <div className="bg-gradient-to-br from-[#fff7ed] via-white to-[#eef2ff] rounded-2xl border border-gray-100 shadow-sm p-5">
             <div ref={milestoneCanvasRef} className="relative h-[440px] overflow-y-auto pr-2">
-              <div className="absolute left-[18px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-orange-300 via-pink-300 to-indigo-300" />
-              <div className="space-y-4">
+              <div className="relative space-y-4 pb-4">
+                <div className="absolute left-[18px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-orange-300 via-pink-300 to-indigo-300" />
                 {milestoneAttempts.map((attempt, index) => (
                   <div key={attempt.id || `${attempt.student_id}-${index}`} className="relative pl-12">
                     <span className="absolute left-[10px] top-6 h-4 w-4 rounded-full border-2 border-white bg-gradient-to-r from-[#ff4b2b] to-[#ff416c] shadow" />
