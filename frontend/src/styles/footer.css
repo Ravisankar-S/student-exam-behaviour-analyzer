@@ -1,0 +1,62 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&display=swap");
+
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 20px 28px;
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(26, 30, 44, 0.55);
+}
+
+.app-footer::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 48px;
+  width: min(520px, 80vw);
+  height: 1px;
+  background: linear-gradient(90deg, rgba(245, 174, 187, 0), rgba(245, 174, 187, 0.55), rgba(177, 201, 255, 0.45), rgba(245, 174, 187, 0));
+  opacity: 0.5;
+}
+
+.footer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(240, 230, 242, 0.8);
+  box-shadow: 0 8px 20px rgba(28, 32, 46, 0.08);
+}
+
+.footer-divider {
+  opacity: 0.35;
+}
+
+.footer-text {
+  opacity: 0.75;
+}
+
+@media (max-width: 600px) {
+  .app-footer {
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+  }
+
+  .app-footer::before {
+    bottom: 56px;
+  }
+
+  .footer-divider {
+    display: none;
+  }
+}

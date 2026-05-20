@@ -4,6 +4,12 @@ CLAUDE.md
 tasks.md
 backend/app/ml/README.md
 
+#seed scripts
+backend/dt_test.py
+backend/seed_admin.py
+backend/seed_assessment_questions.py
+backend/seed_synthetic_behavior_logs.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

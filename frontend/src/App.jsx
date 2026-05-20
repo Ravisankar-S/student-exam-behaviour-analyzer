@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
+import LandingPage from './pages/LandingPage'
 import RoleSelectPage from './pages/RoleSelectPage'
 import AuthPage from './pages/AuthPage'
 import TeacherDashboard from './pages/TeacherDashboard'
@@ -8,6 +9,7 @@ import AdminDashboard from './pages/AdminDashboard'
 import ExamQuestionsPage from './pages/ExamQuestionsPage'
 import ClickSpark from './components/ClickSpark'
 import FullScreenLoader from './components/FullScreenLoader'
+import Footer from './components/Footer'
 
 /* Redirects to /login if not authenticated; also guards by role */
 function ProtectedRoute({ children, allowedRole }) {
@@ -27,44 +29,50 @@ export default function App() {
       sparkCount={8}
       duration={450}
     >
-      <Routes>
-      <Route path="/" element={<RoleSelectPage />} />
-      <Route path="/auth" element={<AuthPage />} />
-      <Route
-        path="/dashboard/teacher"
-        element={
-          <ProtectedRoute allowedRole="teacher">
-            <TeacherDashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/dashboard/student"
-        element={
-          <ProtectedRoute allowedRole="student">
-            <StudentDashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/dashboard/admin"
-        element={
-          <ProtectedRoute allowedRole="admin">
-            <AdminDashboard />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/dashboard/teacher/exam/:examId/questions"
-        element={
-          <ProtectedRoute allowedRole="teacher">
-            <ExamQuestionsPage />
-          </ProtectedRoute>
-        }
-      />
-      {/* Catch-all → back to role select */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <div className="app-shell">
+        <main className="app-content">
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/role-select" element={<RoleSelectPage />} />
+            <Route path="/auth" element={<AuthPage />} />
+            <Route
+              path="/dashboard/teacher"
+              element={
+                <ProtectedRoute allowedRole="teacher">
+                  <TeacherDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/student"
+              element={
+                <ProtectedRoute allowedRole="student">
+                  <StudentDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/admin"
+              element={
+                <ProtectedRoute allowedRole="admin">
+                  <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/teacher/exam/:examId/questions"
+              element={
+                <ProtectedRoute allowedRole="teacher">
+                  <ExamQuestionsPage />
+                </ProtectedRoute>
+              }
+            />
+            {/* Catch-all -> landing */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
+        <Footer />
+      </div>
     </ClickSpark>
   )
 }
